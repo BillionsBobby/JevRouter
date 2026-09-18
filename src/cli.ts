@@ -10,7 +10,7 @@ import { createProvider } from "./runtime.js";
 import { saveDecision, savePlan } from "./store.js";
 import type { CapabilityManifest, RouteInput } from "./types.js";
 import { startMcpServer } from "./mcp-server.js";
-import { setupAgents } from "./agent-setup.js";
+import { doctorAgents, setupAgents } from "./agent-setup.js";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -158,12 +158,18 @@ async function serveMcp(args: string[]): Promise<void> {
 }
 
 async function agent(args: string[]): Promise<void> {
-  if (args[0] !== "setup") throw new Error("usage: jevrouter agent setup --agent codex|claude|all");
+  if (args[0] === "doctor") {
+    const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
+    if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("usage: jevrouter agent doctor --agent codex|claude|all");
+    console.log(JSON.stringify(await doctorAgents(target), null, 2));
+    return;
+  }
+  if (args[0] !== "setup") throw new Error("usage: jevrouter agent setup|doctor --agent codex|claude|all");
   const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
   if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("--agent must be codex, claude, or all");
   const results = await setupAgents(target);
   for (const result of results) console.log(`${result.agent}: ${result.status} ${result.path}`);
-  console.log("Export JEV_API_KEY in the environment, then restart the Agent. The key is not written to these files.");
+  console.log("Export one of JEV_API_KEY, TYPESAFE_API_KEY, or OPENROUTER_API_KEY, then restart the Agent. Keys are not written to these files.");
 }
 
 function option(args: string[], name: string): string | undefined {
@@ -207,6 +213,7 @@ Commands:
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
   agent setup --agent codex|claude|all       configure the Agent MCP entrypoint
+  agent doctor --agent codex|claude|all      verify configuration, instructions, and key availability
 
 Environment:
   TYPESAFE_API_KEY or JEV_API_KEY   official Jev API key
