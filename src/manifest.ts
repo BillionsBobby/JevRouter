@@ -98,7 +98,13 @@ export async function loadManifestFile(filePath: string): Promise<CapabilityMani
 export async function loadPolicyFile(filePath?: string): Promise<RouterPolicy> {
   if (!filePath) return { ...defaultPolicy };
   const absolute = resolve(filePath);
-  const raw = await readFile(absolute, "utf8");
+  let raw: string;
+  try {
+    raw = await readFile(absolute, "utf8");
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { ...defaultPolicy };
+    throw error;
+  }
   const parsed = parse(raw);
   if (!parsed || typeof parsed !== "object") throw new Error(`${absolute}: policy must be an object`);
   return { ...defaultPolicy, ...(parsed as RouterPolicy) };
