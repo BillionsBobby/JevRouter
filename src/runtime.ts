@@ -2,7 +2,11 @@ import { CachedJevProvider, DemoProvider, HttpJevProvider, OpenRouterJevProvider
 import type { JevProvider } from "./types.js";
 
 export function createProvider(kind?: string): JevProvider {
-  const apiKey = process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
+  const apiKey = kind === "openrouter"
+    ? process.env.OPENROUTER_API_KEY ?? process.env.JEV_API_KEY
+    : kind === "typesafe"
+      ? process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY
+      : process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
   if (kind === "demo" || (!apiKey && kind !== "typesafe" && kind !== "openrouter")) {
     if (!apiKey) console.error("No Jev key found; using the labelled offline demo provider");
     return maybeCache(new DemoProvider());

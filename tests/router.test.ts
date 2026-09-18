@@ -5,7 +5,7 @@ import { JevRouter } from "../src/router.js";
 import { discoverMcpConfig } from "../src/mcp.js";
 import { discoverClis, discoverDsh, discoverSkills } from "../src/discovery.js";
 import { CachedJevProvider } from "../src/provider.js";
-import { route as sdkRoute } from "../src/api.js";
+import { createSdkProvider, route as sdkRoute } from "../src/api.js";
 import { handleMessage } from "../src/mcp-server.js";
 import { CapabilityRegistry, defaultPolicy } from "../src/manifest.js";
 import { doctorAgents, renderClaudeServer, renderCodexConfigBlock, renderRoutingInstructions } from "../src/agent-setup.js";
@@ -222,8 +222,39 @@ test("renders key-safe Codex and Claude Agent setup", () => {
   assert.match(renderRoutingInstructions(), /call the JevRouter MCP tool/);
 });
 
+test("provider setup uses only the selected provider key", () => {
+  const claude = renderClaudeServer("openrouter") as { env: Record<string, string> };
+  assert.deepEqual(Object.keys(claude.env), ["OPENROUTER_API_KEY"]);
+  const codex = renderCodexConfigBlock("openrouter");
+  assert.match(codex, /env_vars = \["OPENROUTER_API_KEY"\]/);
+});
+
+test("explicit OpenRouter provider uses the OpenRouter key when multiple keys exist", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousTypesafe = process.env.TYPESAFE_API_KEY;
+  const previousOpenRouter = process.env.OPENROUTER_API_KEY;
+  let authorization = "";
+  process.env.TYPESAFE_API_KEY = "typesafe-test-key";
+  process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+  globalThis.fetch = (async (_input, init) => {
+    authorization = String((init?.headers as Record<string, string>)?.Authorization ?? "");
+    return Response.json({ answers: { tool: { type: "choice", choice: "tool", probabilities: { tool: 1 }, confidence: 1 } } });
+  }) as typeof fetch;
+  try {
+    const provider = createSdkProvider({ provider: "openrouter", cache: false });
+    await provider.decide({ state: "test", candidates: [{ id: "tool", name: "Tool", type: "mcp_tool", description: "test" }] });
+    assert.equal(authorization, "Bearer openrouter-test-key");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousTypesafe === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousTypesafe;
+    if (previousOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousOpenRouter;
+  }
+});
+
 test("agent doctor is read-only and reports missing setup", async () => {
-  const results = await doctorAgents("all", "/tmp/jevrouter-agent-doctor-missing");
+  const results = await doctorAgents("all", "/tmp/jevrouter-agent-doctor-missing", "openrouter");
   assert.equal(results.length, 2);
   assert.equal(results.every((result) => result.configured === false), true);
   assert.ok(results.every((result) => result.issues.length > 0));

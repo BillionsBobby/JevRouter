@@ -161,7 +161,9 @@ async function agent(args: string[]): Promise<void> {
   if (args[0] === "doctor") {
     const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
     if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("usage: jevrouter agent doctor --agent codex|claude|all");
-    console.log(JSON.stringify(await doctorAgents(target), null, 2));
+    const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
+    if (provider !== undefined && provider !== "typesafe" && provider !== "openrouter") throw new Error("--provider must be typesafe or openrouter");
+    console.log(JSON.stringify(await doctorAgents(target, process.cwd(), provider), null, 2));
     return;
   }
   if (args[0] !== "setup") throw new Error("usage: jevrouter agent setup|doctor --agent codex|claude|all");

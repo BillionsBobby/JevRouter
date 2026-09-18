@@ -13,9 +13,9 @@ npx --yes github:BillionsBobby/JevRouter agent setup --agent all
 
 The command creates project-level configuration for Codex and Claude Code:
 
-- `.codex/config.toml` forwards `JEV_API_KEY`, `TYPESAFE_API_KEY`, and `OPENROUTER_API_KEY` with `env_vars`.
+- `.codex/config.toml` forwards the selected provider key with `env_vars`.
 - `.codex/jevrouter-instructions.md` is loaded through `model_instructions_file` and tells Codex to route meaningful capability choices first.
-- `.mcp.json` expands all three key names at runtime.
+- `.mcp.json` expands only the selected provider key at runtime.
 - `CLAUDE.md` gives Claude Code the same routing rule.
 
 The key is never written into either file. Restart the Agent after setup.

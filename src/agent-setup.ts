@@ -16,6 +16,7 @@ export interface AgentDoctorResult {
   instruction_file: string;
   mcp_file: string;
   key_available: boolean;
+  provider_key: string;
   issues: string[];
 }
 
@@ -60,9 +61,10 @@ export function renderRoutingInstructions(): string {
   return `${routingInstructions}\n`;
 }
 
-export async function doctorAgents(target: AgentTarget, root = process.cwd()): Promise<AgentDoctorResult[]> {
+export async function doctorAgents(target: AgentTarget, root = process.cwd(), provider?: AgentProvider): Promise<AgentDoctorResult[]> {
   const targets = target === "all" ? (["codex", "claude"] as const) : ([target] as const);
-  const keyAvailable = keyNames.some((name) => Boolean(process.env[name]));
+  const providerKey = resolveKeyName(provider);
+  const keyAvailable = Boolean(process.env[providerKey]);
   return Promise.all(targets.map(async (agent) => {
     const mcpFile = join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json");
     const instructionFile = join(root, agent === "codex" ? ".codex/jevrouter-instructions.md" : "CLAUDE.md");
@@ -71,8 +73,9 @@ export async function doctorAgents(target: AgentTarget, root = process.cwd()): P
     if (!mcp) issues.push(`missing ${mcpFile}`);
     if (!mcp?.includes("jevrouter")) issues.push(`MCP entry jevrouter not found in ${mcpFile}`);
     if (!instructions?.includes(instructionMarker)) issues.push(`routing instructions not found in ${instructionFile}`);
-    if (!keyAvailable) issues.push("no JEV_API_KEY, TYPESAFE_API_KEY, or OPENROUTER_API_KEY in the current environment");
-    return { agent, configured: issues.length === 0, instruction_file: instructionFile, mcp_file: mcpFile, key_available: keyAvailable, issues };
+    if (!keyAvailable) issues.push(`no ${providerKey} in the current environment`);
+    if (mcp && !mcp.includes(providerKey)) issues.push(`${providerKey} is not forwarded by ${mcpFile}`);
+    return { agent, configured: issues.length === 0, instruction_file: instructionFile, mcp_file: mcpFile, key_available: keyAvailable, provider_key: providerKey, issues };
   }));
 }
 

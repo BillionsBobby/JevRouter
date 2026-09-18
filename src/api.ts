@@ -58,7 +58,7 @@ export function createSdkProvider(options: RouteOptions = {}): JevProvider {
 }
 
 function createProvider(options: RouteOptions): JevProvider {
-  const apiKey = options.apiKey ?? process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
+  const apiKey = resolveApiKey(options);
   let provider: JevProvider;
   if (options.provider === "demo" || (!apiKey && !options.provider)) {
     provider = new DemoProvider();
@@ -70,4 +70,11 @@ function createProvider(options: RouteOptions): JevProvider {
       : new HttpJevProvider({ apiKey, endpoint: options.endpoint, model: options.model ?? "jev-latest" });
   }
   return options.cache === false || process.env.JEV_ROUTER_CACHE === "0" ? provider : new CachedJevProvider(provider);
+}
+
+function resolveApiKey(options: RouteOptions): string | undefined {
+  if (options.apiKey) return options.apiKey;
+  if (options.provider === "openrouter") return process.env.OPENROUTER_API_KEY ?? process.env.JEV_API_KEY;
+  if (options.provider === "typesafe") return process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY;
+  return process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
 }
