@@ -102,20 +102,26 @@ The Agent can call `jev_route` with its current `candidates` array. A candidate 
 
 ### One-command Agent setup
 
-For a trusted project, generate the Codex and/or Claude Code MCP entry without writing the key to disk:
+For a trusted project, generate the Codex and/or Claude Code MCP entry and routing instructions without writing the key to disk:
 
 ```bash
 export JEV_API_KEY="your Jev key"
 npx --yes github:BillionsBobby/JevRouter agent setup --agent all
 ```
 
-This creates or updates project-level `.codex/config.toml` and `.mcp.json` additively. Codex receives `JEV_API_KEY` through `env_vars`; Claude Code uses `${JEV_API_KEY}` expansion. Restart the Agent after setup. The MCP server instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
+This creates or updates project-level `.codex/config.toml`, `.codex/jevrouter-instructions.md`, `.mcp.json`, and `CLAUDE.md` additively. Codex receives all supported key names through `env_vars` and loads the routing instructions with `model_instructions_file`; Claude Code uses environment expansion plus `CLAUDE.md`. Restart the Agent after setup. The instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
 
 For only one host:
 
 ```bash
 npx --yes github:BillionsBobby/JevRouter agent setup --agent codex
 npx --yes github:BillionsBobby/JevRouter agent setup --agent claude
+```
+
+Verify an existing setup without changing files:
+
+```bash
+npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
 ```
 
 The generated MCP command uses the public GitHub package source so this works before an npm release. After `jevrouter` is published, set `JEVROUTER_PACKAGE=jevrouter` before setup to use the npm package instead.

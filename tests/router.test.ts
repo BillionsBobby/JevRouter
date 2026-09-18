@@ -8,7 +8,7 @@ import { CachedJevProvider } from "../src/provider.js";
 import { route as sdkRoute } from "../src/api.js";
 import { handleMessage } from "../src/mcp-server.js";
 import { CapabilityRegistry, defaultPolicy } from "../src/manifest.js";
-import { renderClaudeServer, renderCodexConfigBlock } from "../src/agent-setup.js";
+import { doctorAgents, renderClaudeServer, renderCodexConfigBlock, renderRoutingInstructions } from "../src/agent-setup.js";
 import { resolve } from "node:path";
 
 const candidates: CapabilityManifest[] = [
@@ -211,11 +211,24 @@ test("renders key-safe Codex and Claude Agent setup", () => {
   assert.deepEqual(claude, {
     command: "npx",
     args: ["-y", "github:BillionsBobby/JevRouter", "serve-mcp"],
-    env: { JEV_API_KEY: "${JEV_API_KEY}" },
+    env: {
+      JEV_API_KEY: "${JEV_API_KEY}",
+      TYPESAFE_API_KEY: "${TYPESAFE_API_KEY}",
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}",
+    },
   });
   const codex = renderCodexConfigBlock();
   assert.match(codex, /\[mcp_servers\.jevrouter\]/);
-  assert.match(codex, /env_vars = \["JEV_API_KEY"\]/);
+  assert.match(codex, /env_vars = \["JEV_API_KEY", "TYPESAFE_API_KEY", "OPENROUTER_API_KEY"\]/);
   assert.match(codex, /github:BillionsBobby\/JevRouter/);
+  assert.match(codex, /model_instructions_file = "jevrouter-instructions.md"/);
   assert.doesNotMatch(codex, /sk-|JEV_API_KEY =/);
+  assert.match(renderRoutingInstructions(), /call the JevRouter MCP tool/);
+});
+
+test("agent doctor is read-only and reports missing setup", async () => {
+  const results = await doctorAgents("all", "/tmp/jevrouter-agent-doctor-missing");
+  assert.equal(results.length, 2);
+  assert.equal(results.every((result) => result.configured === false), true);
+  assert.ok(results.every((result) => result.issues.length > 0));
 });

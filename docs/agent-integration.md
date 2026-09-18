@@ -7,16 +7,26 @@ JevRouter adds a Jev decision step to an Agent host. The host still performs the
 Until an npm release is available, run the setup command from GitHub:
 
 ```bash
-export JEV_API_KEY="your Jev key"
+export OPENROUTER_API_KEY="your OpenRouter Jev key"
 npx --yes github:BillionsBobby/JevRouter agent setup --agent all
 ```
 
 The command creates project-level configuration for Codex and Claude Code:
 
-- `.codex/config.toml` forwards `JEV_API_KEY` with `env_vars`.
-- `.mcp.json` expands `${JEV_API_KEY}` at runtime.
+- `.codex/config.toml` forwards `JEV_API_KEY`, `TYPESAFE_API_KEY`, and `OPENROUTER_API_KEY` with `env_vars`.
+- `.codex/jevrouter-instructions.md` is loaded through `model_instructions_file` and tells Codex to route meaningful capability choices first.
+- `.mcp.json` expands all three key names at runtime.
+- `CLAUDE.md` gives Claude Code the same routing rule.
 
 The key is never written into either file. Restart the Agent after setup.
+
+Check the setup without making changes:
+
+```bash
+OPENROUTER_API_KEY="your key" npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
+```
+
+Both agents should report `configured: true` and an empty `issues` array.
 
 After JevRouter is published to npm, set `JEVROUTER_PACKAGE=jevrouter` before running setup to use the package name.
 
