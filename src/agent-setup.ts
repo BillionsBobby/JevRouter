@@ -1,197 +1,166 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, readFile, writeFile, lstat, copyFile } from "node:fs/promises";
+import { constants, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { providerConfiguration } from "./runtime.js";
+import type { KeyName } from "./runtime.js";
 
 export type AgentTarget = "codex" | "claude" | "all";
 export type AgentProvider = "typesafe" | "openrouter";
-
+export interface AgentSetupOptions { withMcp?: boolean }
 export interface AgentSetupResult {
   agent: "codex" | "claude";
   path: string;
   status: "created" | "updated" | "existing";
+  skill_file: string;
+  provider_key: string;
 }
-
 export interface AgentDoctorResult {
   agent: "codex" | "claude";
   configured: boolean;
   instruction_file: string;
-  mcp_file: string;
+  skill_file: string;
+  mcp_file: string | null;
   key_available: boolean;
   provider_key: string;
   issues: string[];
+  scope: "local_configuration_only";
+}
+interface Integration {
+  version: 2;
+  provider: AgentProvider;
+  key: KeyName;
+  cli: string;
+  with_mcp: boolean;
+}
+const marker = "<!-- jevrouter:skill-cli-v2 -->";
+const cliPath = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+const integrationPath = (root: string) => join(root, ".jevrouter/integration-v2.json");
+const skillDirectory = (agent: "codex" | "claude", root: string) => join(root, agent === "codex" ? ".agents/skills/jevrouter" : ".claude/skills/jevrouter");
+const shellQuote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
+
+export function renderJevRouterSkill(command = "node bin/jevrouter.mjs"): string {
+  return readFileSync(new URL("../skills/jevrouter/SKILL.md", import.meta.url), "utf8").replaceAll("{{JEVROUTER_COMMAND}}", command);
 }
 
-export function renderJevRouterSkill(): string {
-  return `---
-name: jevrouter-routing
-description: Route meaningful model, Tool, Skill, CLI, Subagent, and DSH choices through JevRouter before execution.
----
-
-# JevRouter routing skill
-
-Use this skill whenever the task requires choosing between two or more models, tools, skills, CLIs, Subagents, or DSH capabilities.
-
-## Procedure
-
-1. Collect the user's current request and the real candidate descriptors available in this Agent turn.
-2. Call the \`jev_route\` MCP tool when it is available. Pass native function-tool descriptors directly.
-3. If MCP is unavailable, call the local CLI with the same request and a candidates file:
-
-   \`OPENROUTER_API_KEY=... npx --yes github:BillionsBobby/JevRouter route --provider openrouter --request "..." --candidates-file ./jevrouter-candidates.json\`
-
-4. Follow the result status. Execute only \`selected\` when status is \`selected\` or after the required confirmation.
-5. Stop for \`needs_confirmation\` or \`no_decision\`. Explain the fallback or ask for clarification.
-6. Re-route when a new major step changes the available capabilities or task intent.
-
-Jev probabilities describe uncertainty. They do not grant permission. Never bypass a filtered capability or invent a missing candidate.
-`;
+export function renderRoutingInstructions(skill = ".agents/skills/jevrouter/SKILL.md"): string {
+  return `\n${marker}\n## JevRouter\nBefore the first meaningful choice between tools, models, or subagents, read ${skill} and run its CLI routing procedure on the actual task and available candidates. Announce the start, report the returned decision_id/status, then perform the host-authorized selected step. Re-route when observations change the next choice. Skip trivial chat and a sole user-specified operation. If Jev is unavailable, disclose the failure and explicit fallback; never imply that setup alone routed this task. Higher-priority instructions and host permissions still apply.\n${marker}\n`;
 }
 
-const serverPackage = process.env.JEVROUTER_PACKAGE ?? "github:BillionsBobby/JevRouter";
-const serverArgs = ["-y", serverPackage, "serve-mcp"];
-const keyNames = ["JEV_API_KEY", "TYPESAFE_API_KEY", "OPENROUTER_API_KEY"] as const;
-const instructionMarker = "<!-- jevrouter:agent-routing -->";
-const routingInstructions = `${instructionMarker}
-# JevRouter routing
+function launchArgs(provider?: AgentProvider): string[] {
+  return [cliPath, "serve-mcp", "--provider", providerConfiguration(provider).provider];
+}
+export function renderClaudeServer(provider?: AgentProvider): Record<string, unknown> {
+  const { key } = providerConfiguration(provider);
+  return { command: process.execPath, args: launchArgs(provider), env: { [key]: "${" + key + "}" } };
+}
+export function renderCodexConfigBlock(provider?: AgentProvider): string {
+  const { key } = providerConfiguration(provider);
+  return `[mcp_servers.jevrouter]\ncommand = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify(launchArgs(provider))}\nenv_vars = [${JSON.stringify(key)}]\n`;
+}
 
-Before choosing a meaningful model, Tool, Skill, CLI, Subagent, or DSH capability, call the JevRouter MCP tool 'jev_route' with the user's current request and the available candidate descriptors. Prefer native function-tool descriptors when available.
-
-Follow the returned status: execute only the returned 'selected' capability when status is 'selected' or after required confirmation; stop, ask for clarification, or fall back explicitly on 'needs_confirmation' and 'no_decision'. Jev probabilities express uncertainty, not permission. Do not bypass a filtered capability or silently replace a no-decision result.
-
-${instructionMarker}`;
-
-export async function setupAgents(target: AgentTarget, root = process.cwd(), provider?: AgentProvider): Promise<AgentSetupResult[]> {
-  const keyName = resolveKeyName(provider);
-  const targets = target === "all" ? (["codex", "claude"] as const) : ([target] as const);
+/** Skill and project instructions are the default. No MCP or base-prompt replacement is required. */
+export async function setupAgents(target: AgentTarget = "all", root = process.cwd(), provider?: AgentProvider, options: AgentSetupOptions = {}): Promise<AgentSetupResult[]> {
+  const targets = targetAgents(target);
+  root = resolve(root);
+  const selected = providerConfiguration(provider);
+  if (selected.provider === "demo") throw new Error("Agent setup requires a real Jev provider");
+  await lstat(cliPath); // Reject source-only installs before writing host config.
+  const integration: Integration = { version: 2, provider: selected.provider, key: selected.key, cli: cliPath, with_mcp: options.withMcp === true };
+  await writeNewOrSame(integrationPath(root), JSON.stringify(integration, null, 2) + "\n");
   const results: AgentSetupResult[] = [];
   for (const agent of targets) {
-    results.push(agent === "codex" ? await setupCodex(root, keyName) : await setupClaude(root, keyName));
-    await setupSkill(agent, root);
+    const directory = skillDirectory(agent, root);
+    const helper = join(directory, "scripts/route.mjs");
+    const helperCode = `import { spawnSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';\nconst result = spawnSync(process.execPath, [${JSON.stringify(cliPath)}, ...process.argv.slice(2)], { cwd: fileURLToPath(new URL('../../../../', import.meta.url)), env: { ...process.env, JEV_ROUTER_PROVIDER: ${JSON.stringify(selected.provider)} }, stdio: 'inherit' });\nif (result.error) console.error('JevRouter launcher failed: ' + result.error.message);\nprocess.exit(result.status ?? 1);\n`;
+    await writeNewOrSame(helper, helperCode);
+    const skill = join(directory, "SKILL.md");
+    await writeNewOrSame(skill, renderJevRouterSkill(`node ${shellQuote(helper)}`));
+    const instructions = await instructionPath(agent, root);
+    const block = renderRoutingInstructions(skill);
+    const current = await readOptional(instructions);
+    let status: AgentSetupResult["status"] = "existing";
+    if (!current?.includes(block.trim())) {
+      if (current?.includes(marker)) throw new Error(`JevRouter instructions differ in ${instructions}; existing content preserved`);
+      if (current !== null) {
+        // Preserve an exact backup, then append: never truncate user instructions.
+        await copyFile(instructions, `${instructions}.jevrouter-backup-${randomUUID()}`, constants.COPYFILE_EXCL);
+        await appendFile(instructions, block);
+        status = "updated";
+      } else {
+        await writeNewOrSame(instructions, block);
+        status = "created";
+      }
+    }
+    if (options.withMcp) await setupMcp(agent, root, selected.provider);
+    results.push({ agent, path: instructions, status, skill_file: skill, provider_key: selected.key });
   }
   return results;
 }
 
-export function renderClaudeServer(provider?: AgentProvider): Record<string, unknown> {
-  const keyName = resolveKeyName(provider);
-  return {
-    command: "npx",
-    args: serverArgs,
-    env: { [keyName]: `\${${keyName}}` },
-  };
-}
-
-export function renderCodexConfigBlock(provider?: AgentProvider): string {
-  const keyName = resolveKeyName(provider);
-  return `[mcp_servers.jevrouter]\ncommand = "npx"\nargs = ["-y", "${serverPackage}", "serve-mcp"]\nenv_vars = ["${keyName}"]\nmodel_instructions_file = "jevrouter-instructions.md"\n`;
-}
-
-export function renderRoutingInstructions(): string {
-  return `${routingInstructions}\n`;
-}
-
-export async function doctorAgents(target: AgentTarget, root = process.cwd(), provider?: AgentProvider): Promise<AgentDoctorResult[]> {
-  const targets = target === "all" ? (["codex", "claude"] as const) : ([target] as const);
-  const providerKey = resolveKeyName(provider);
-  const keyAvailable = Boolean(process.env[providerKey]);
-  return Promise.all(targets.map(async (agent) => {
-    const mcpFile = join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json");
-    const instructionFile = join(root, agent === "codex" ? ".codex/jevrouter-instructions.md" : "CLAUDE.md");
-    const skillFile = join(root, agent === "codex" ? ".agents/skills/jevrouter-routing/SKILL.md" : ".claude/skills/jevrouter-routing/SKILL.md");
+/** Read-only structural checks. This does not claim host loading or API authentication. */
+export async function doctorAgents(target: AgentTarget = "all", root = process.cwd(), provider?: AgentProvider): Promise<AgentDoctorResult[]> {
+  const targets = targetAgents(target);
+  root = resolve(root);
+  let integration: Integration | null = null;
+  const receipt = await readOptional(integrationPath(root));
+  try { integration = receipt ? JSON.parse(receipt) as Integration : null; } catch { /* reported below */ }
+  const selected = providerConfiguration(provider);
+  return Promise.all(targets.map(async agent => {
     const issues: string[] = [];
-    const [mcp, instructions] = await Promise.all([readIfExists(mcpFile), readIfExists(instructionFile)]);
-    if (!mcp) issues.push(`missing ${mcpFile}`);
-    if (!mcp?.includes("jevrouter")) issues.push(`MCP entry jevrouter not found in ${mcpFile}`);
-    if (!instructions?.includes(instructionMarker)) issues.push(`routing instructions not found in ${instructionFile}`);
-    if (!(await readIfExists(skillFile))) issues.push(`skill not found at ${skillFile}`);
-    if (!keyAvailable) issues.push(`no ${providerKey} in the current environment`);
-    if (mcp && !mcp.includes(providerKey)) issues.push(`${providerKey} is not forwarded by ${mcpFile}`);
-    return { agent, configured: issues.length === 0, instruction_file: instructionFile, mcp_file: mcpFile, key_available: keyAvailable, provider_key: providerKey, issues };
+    if (!integration || integration.version !== 2) issues.push("Run agent setup to install the Skill + CLI integration");
+    if (provider && integration && selected.provider !== integration.provider) issues.push("Requested provider differs from installed provider");
+    const key = integration?.key ?? selected.key;
+    const keyAvailable = Boolean(process.env[key]?.trim());
+    if (!keyAvailable) issues.push(`Export ${key} in the Agent process environment`);
+    const instructions = await instructionPath(agent, root);
+    const skill = join(skillDirectory(agent, root), "SKILL.md");
+    const helper = join(skillDirectory(agent, root), "scripts/route.mjs");
+    if (!(await readOptional(instructions))?.includes(renderRoutingInstructions(skill).trim())) issues.push(`Missing active project routing rule: ${instructions}`);
+    if (!(await readOptional(skill))?.includes("name: jevrouter")) issues.push(`Missing Skill: ${skill}`);
+    if (!(await readOptional(helper))?.includes(integration?.cli ?? cliPath)) issues.push(`Missing or stale CLI helper: ${helper}`);
+    try { if (integration) await lstat(integration.cli); } catch { issues.push("Installed CLI is no longer present; reinstall JevRouter"); }
+    const mcpFile = integration?.with_mcp ? join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json") : null;
+    if (mcpFile) {
+      const config = await readOptional(mcpFile);
+      if (!config?.includes(integration!.cli) || !config.includes(key)) issues.push(`Missing or stale optional MCP configuration: ${mcpFile}`);
+    }
+    return { agent, configured: issues.length === 0, instruction_file: instructions, skill_file: skill, mcp_file: mcpFile, key_available: keyAvailable, provider_key: key, issues, scope: "local_configuration_only" as const };
   }));
 }
 
-async function setupClaude(root: string, keyName: typeof keyNames[number]): Promise<AgentSetupResult> {
-  const path = join(root, ".mcp.json");
-  const server = renderClaudeServer(keyName === "OPENROUTER_API_KEY" ? "openrouter" : "typesafe");
-  const instructionPath = join(root, "CLAUDE.md");
+async function setupMcp(agent: "codex" | "claude", root: string, provider: AgentProvider): Promise<void> {
+  // An existing config may be owned by the user. Write a proposal rather than replacing it.
+  const path = join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json");
+  const desired = agent === "codex" ? renderCodexConfigBlock(provider) : JSON.stringify({ mcpServers: { jevrouter: renderClaudeServer(provider) } }, null, 2) + "\n";
+  await writeNewOrSame(path, desired);
+}
+async function instructionPath(agent: "codex" | "claude", root: string): Promise<string> {
+  if (agent === "claude") return join(root, "CLAUDE.md");
+  return (await readOptional(join(root, "AGENTS.override.md")))?.trim() ? join(root, "AGENTS.override.md") : join(root, "AGENTS.md");
+}
+function targetAgents(target: AgentTarget): Array<"codex" | "claude"> {
+  if (!["codex", "claude", "all"].includes(target)) throw new Error("agent must be codex, claude, or all");
+  return target === "all" ? ["codex", "claude"] : [target];
+}
+async function readOptional(path: string): Promise<string | null> {
   try {
-    const current = JSON.parse(await readFile(path, "utf8")) as { mcpServers?: Record<string, unknown> };
-    const servers = current.mcpServers ?? {};
-    await ensureInstructions(instructionPath);
-    if (servers.jevrouter) return { agent: "claude", path, status: "existing" };
-    await writeFile(path, `${JSON.stringify({ ...current, mcpServers: { ...servers, jevrouter: server } }, null, 2)}\n`, { flag: "wx" }).catch(async (error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      return appendJsonServer(path, server);
-    });
-    return { agent: "claude", path, status: "updated" };
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`${path} exists but is not valid JSON; add jevrouter manually without overwriting it`);
-    await writeFile(path, `${JSON.stringify({ mcpServers: { jevrouter: server } }, null, 2)}\n`, { flag: "wx" });
-    await ensureInstructions(instructionPath);
-    return { agent: "claude", path, status: "created" };
-  }
-}
-
-async function appendJsonServer(path: string, server: Record<string, unknown>): Promise<void> {
-  const current = JSON.parse(await readFile(path, "utf8")) as { mcpServers?: Record<string, unknown> };
-  if (current.mcpServers?.jevrouter) return;
-  await writeFile(path, `${JSON.stringify({ ...current, mcpServers: { ...(current.mcpServers ?? {}), jevrouter: server } }, null, 2)}\n`);
-}
-
-async function setupCodex(root: string, keyName: typeof keyNames[number]): Promise<AgentSetupResult> {
-  const directory = join(root, ".codex");
-  const path = join(directory, "config.toml");
-  await mkdir(directory, { recursive: true });
-  const block = renderCodexConfigBlock(keyName === "OPENROUTER_API_KEY" ? "openrouter" : "typesafe");
-  await writeIfMissing(join(directory, "jevrouter-instructions.md"), renderRoutingInstructions());
-  try {
-    const current = await readFile(path, "utf8");
-    if (/\[mcp_servers\.jevrouter\]/.test(current)) return { agent: "codex", path, status: "existing" };
-    await appendFile(path, `${current.endsWith("\n") ? "\n" : "\n\n"}${block}`);
-    return { agent: "codex", path, status: "updated" };
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await writeFile(path, `# JevRouter project MCP configuration\n${block}`, { flag: "wx" });
-    return { agent: "codex", path, status: "created" };
-  }
-}
-
-async function setupSkill(agent: "codex" | "claude", root: string): Promise<void> {
-  const directory = join(root, agent === "codex" ? ".agents/skills/jevrouter-routing" : ".claude/skills/jevrouter-routing");
-  await mkdir(directory, { recursive: true });
-  await writeIfMissing(join(directory, "SKILL.md"), renderJevRouterSkill());
-}
-
-async function ensureInstructions(path: string): Promise<void> {
-  try {
-    const current = await readFile(path, "utf8");
-    if (current.includes(instructionMarker)) return;
-    await appendFile(path, `${current.endsWith("\n") ? "\n" : "\n\n"}${routingInstructions}\n`);
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await writeFile(path, `${routingInstructions}\n`, { flag: "wx" });
-  }
-}
-
-async function writeIfMissing(path: string, content: string): Promise<void> {
-  try {
-    await writeFile(path, content, { flag: "wx" });
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-}
-
-async function readIfExists(path: string): Promise<string | null> {
-  try {
+    if ((await lstat(path)).isSymbolicLink()) throw new Error(`Refusing to modify or follow symlink: ${path}`);
     return await readFile(path, "utf8");
-  } catch (error: unknown) {
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
 }
-
-function resolveKeyName(provider?: AgentProvider): typeof keyNames[number] {
-  if (provider === "openrouter") return "OPENROUTER_API_KEY";
-  if (provider === "typesafe") return "TYPESAFE_API_KEY";
-  if (process.env.OPENROUTER_API_KEY && !process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY) return "OPENROUTER_API_KEY";
-  if (process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY) return "TYPESAFE_API_KEY";
-  return "JEV_API_KEY";
+async function writeNewOrSame(path: string, text: string): Promise<void> {
+  const current = await readOptional(path);
+  if (current === text) return;
+  await mkdir(dirname(path), { recursive: true });
+  if (current !== null) {
+    const proposal = `${path}.jevrouter-proposed-${randomUUID()}`;
+    await writeFile(proposal, text, { flag: "wx", mode: 0o600 });
+    throw new Error(`Existing file preserved: ${path}. Review the proposed configuration: ${proposal}`);
+  }
+  await writeFile(path, text, { flag: "wx", mode: 0o600 });
 }

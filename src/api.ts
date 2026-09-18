@@ -1,5 +1,5 @@
 import { CapabilityRegistry, defaultPolicy, normalizeCapability } from "./manifest.js";
-import { CachedJevProvider, DemoProvider, HttpJevProvider, OpenRouterJevProvider } from "./provider.js";
+import { createProvider as runtimeProvider } from "./runtime.js";
 import { JevRouter } from "./router.js";
 import type { CapabilityInput, CapabilityManifest, JevProvider, PlanMode, PlanStrategy, RouteInput, RoutePlanResult, RouteResult, RouterPolicy } from "./types.js";
 
@@ -58,23 +58,5 @@ export function createSdkProvider(options: RouteOptions = {}): JevProvider {
 }
 
 function createProvider(options: RouteOptions): JevProvider {
-  const apiKey = resolveApiKey(options);
-  let provider: JevProvider;
-  if (options.provider === "demo" || (!apiKey && !options.provider)) {
-    provider = new DemoProvider();
-  } else {
-    if (!apiKey) throw new Error("Set JEV_API_KEY/TYPESAFE_API_KEY or pass apiKey");
-    const openrouter = options.provider === "openrouter" || (!options.provider && Boolean(process.env.OPENROUTER_API_KEY) && !process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY);
-    provider = openrouter
-      ? new OpenRouterJevProvider(apiKey, options.model ?? "~typesafe/jev-latest")
-      : new HttpJevProvider({ apiKey, endpoint: options.endpoint, model: options.model ?? "jev-latest" });
-  }
-  return options.cache === false || process.env.JEV_ROUTER_CACHE === "0" ? provider : new CachedJevProvider(provider);
-}
-
-function resolveApiKey(options: RouteOptions): string | undefined {
-  if (options.apiKey) return options.apiKey;
-  if (options.provider === "openrouter") return process.env.OPENROUTER_API_KEY ?? process.env.JEV_API_KEY;
-  if (options.provider === "typesafe") return process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY;
-  return process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
+  return runtimeProvider(options.provider, options);
 }

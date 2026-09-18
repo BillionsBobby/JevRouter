@@ -31,125 +31,55 @@ JevRouter 是一个本地优先的 Agent 能力路由器，将模型、Subagent�
 
 </details>
 
-## Quick start
+## Quick start: Skill + project instructions + CLI
 
-Public user-facing documentation lives in [`docs/agent-integration.md`](docs/agent-integration.md) and [`docs/architecture.md`](docs/architecture.md). Internal product drafts and research notes are kept outside the public repository.
-
-```bash
-npm install
-npm run typecheck
-npm test
-
-npm run dev -- init
-npm run dev -- capability add examples/capabilities/github.issue.search.json
-npm run dev -- capability add examples/capabilities/github.issue.create.json
-npm run dev -- capability add examples/capabilities/repo.clone.json
-npm run dev -- capability add examples/capabilities/summarize.issues.json
-npm run dev -- capability add examples/capabilities/dsh.github.workflow.json
-npm run dev -- capability add examples/capabilities/model.gpt-6-terra.json
-npm run dev -- capability add examples/capabilities/model.claude-sonnet.json
-npm run dev -- capability add examples/capabilities/subagent.researcher.json
-
-# Works offline. The result is explicitly labelled jevrouter-demo.
-npm run dev -- route --request "查找 owner/repo 最近 30 天的登录失败 issue"
-# Inspect a saved decision without calling the provider again.
-npm run dev -- decision show <decision-id>
-```
-
-To use the official Jev API, set `TYPESAFE_API_KEY` or `JEV_API_KEY` and omit `--provider demo`:
+Node.js 20+ is required. In the project you want the Agent to work on, this single command checks Jev, installs the Skill, and launches Codex with the same key:
 
 ```bash
-TYPESAFE_API_KEY=... npm run dev -- route \
-  --request "查找 owner/repo 最近 30 天的登录失败 issue"
+JEV_API_KEY="your-typesafe-key" npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-The direct TypeSafe endpoint is `https://api.typesafe.ai/v1/systemone`. For an OpenRouter Jev route, set `OPENROUTER_API_KEY`; JevRouter uses OpenRouter's native Decisions endpoint (`/api/alpha/decisions`) with the `~typesafe/jev-latest` model and labels the provider as `openrouter:~typesafe/jev-latest`.
+For Claude Code use `--agent claude`. For OpenRouter replace `JEV_API_KEY` with `OPENROUTER_API_KEY` and add `--provider openrouter`. The host CLI must already be installed. Its login/model credentials are separate from the Jev decision key.
 
-Start the local HTTP process when an Agent wants a stable boundary:
+To install without launching a host (including desktop users):
 
 ```bash
-npm run dev -- serve --provider demo --port 8787
-curl -s http://127.0.0.1:8787/route \
-  -H 'content-type: application/json' \
-  -d '{"request":"查找登录失败 issue"}'
+export OPENROUTER_API_KEY="your-key"; npx --yes github:BillionsBobby/JevRouter agent setup
 ```
 
-For a one-line TypeScript integration, use the SDK. It reads `JEV_API_KEY`, `TYPESAFE_API_KEY`, or `OPENROUTER_API_KEY` automatically:
+Default setup installs **Skills and project instructions only**. Codex reads `AGENTS.md` (or the active `AGENTS.override.md`) and `.agents/skills/jevrouter/SKILL.md`; Claude Code reads `CLAUDE.md` and `.claude/skills/jevrouter/SKILL.md`. It adds a small CLI helper, using the installed package instead of downloading a package for each decision. Existing instructions are backed up and appended to; conflicting integration files are preserved with a proposed replacement. No key is written to disk. No base model instructions are replaced.
+
+Open a new Agent session in this project, explicitly invoke **`$jevrouter`** in Codex or **`/jevrouter`** in Claude Code, and give your real task. Project rules also ask the Agent to route meaningful capability choices automatically. A running session may need to reload skills; GUI apps must inherit the key environment. An inline `KEY=... setup` assignment ends with setup; `agent start` keeps it in the launched host. Skill instructions guide the host; they cannot intercept every built-in tool.
+
+The Agent gathers its real available candidates and runs Jev before choosing a next step. Expect visible `JevRouter START` / `END`, JSON status, a decision ID and an append-only receipt. Setup's `CHECK passed` proves only connectivity, not that a later task was routed.
+
+```bash
+npx --yes github:BillionsBobby/JevRouter agent doctor        # local configuration, no API call
+npx --yes github:BillionsBobby/JevRouter agent doctor --live # also perform a small paid Jev check
+```
+
+`--skip-check` on setup is available for offline installation; it never claims API validation. MCP is optional with `agent setup --with-mcp`; see [Agent integration](docs/agent-integration.md).
+
+### CLI / SDK
+
+No registry or `init` is required if you supply candidates. Use actual host capabilities rather than copying the example names below.
+
+```bash
+OPENROUTER_API_KEY="your-key" npx --yes github:BillionsBobby/JevRouter route --provider openrouter --request "Find original sources before summarizing" --candidates '[{"name":"search_web","description":"Find web sources"},{"name":"summarize","description":"Summarize existing sources"}]'
+```
+
+For Agent calls, `route --stdin` accepts a JSON `{request, context?, candidates, input?, actor_permissions?}` object, with no shell interpolation of the request. `--candidates-file` also accepts JSON/YAML arrays or `{candidates: [...]}`. Progress goes to stderr; stdout is one JSON object. Exit codes are 0 for selected, 2 for review/no-decision, and 1 for errors. Empty candidates and missing keys are errors; demo mode must be explicit.
+
+```bash
+npm install github:BillionsBobby/JevRouter
+```
 
 ```ts
 import { route } from "jevrouter";
-
-const decision = await route({ request: "查找登录失败 issue", candidates: tools });
+const decision = await route({ request, candidates: agentTools });
 ```
 
-The CLI is the equivalent one-line shell interface:
-
-```bash
-JEV_API_KEY=... npx --yes github:BillionsBobby/JevRouter route --request "查找登录失败 issue"
-```
-
-For Codex, Claude, or another MCP-native Agent, run the optional stdio adapter:
-
-```json
-{
-  "mcpServers": {
-    "jevrouter": {
-      "command": "npx",
-      "args": ["-y", "jevrouter", "serve-mcp"],
-      "env": { "JEV_API_KEY": "..." }
-    }
-  }
-}
-```
-
-The Agent can call `jev_route` with its current `candidates` array. A candidate can have `type: "model"`, `"subagent"`, `"mcp_tool"`, `"skill"`, `"cli"`, or `"dsh"`; the routing contract is the same.
-
-### One-command Agent setup
-
-For a trusted project, generate the Codex and/or Claude Code MCP entry and routing instructions without writing the key to disk:
-
-```bash
-export JEV_API_KEY="your Jev key"
-npx --yes github:BillionsBobby/JevRouter agent setup --agent all
-```
-
-This creates or updates project-level `.codex/config.toml`, `.codex/jevrouter-instructions.md`, `.mcp.json`, and `CLAUDE.md` additively. Codex receives all supported key names through `env_vars` and loads the routing instructions with `model_instructions_file`; Claude Code uses environment expansion plus `CLAUDE.md`. Restart the Agent after setup. The instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
-
-The same setup also installs a project Skill at `.agents/skills/jevrouter-routing/SKILL.md` for Codex and `.claude/skills/jevrouter-routing/SKILL.md` for Claude Code. The Skill describes the MCP-first flow and a CLI fallback using `--candidates-file`.
-
-For only one host:
-
-```bash
-npx --yes github:BillionsBobby/JevRouter agent setup --agent codex
-npx --yes github:BillionsBobby/JevRouter agent setup --agent claude
-```
-
-Verify an existing setup without changing files:
-
-```bash
-npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
-```
-
-The generated MCP command uses the public GitHub package source so this works before an npm release. After `jevrouter` is published, set `JEVROUTER_PACKAGE=jevrouter` before setup to use the npm package instead.
-
-When using OpenRouter, setup detects `OPENROUTER_API_KEY` automatically. You can also make the provider explicit:
-
-```bash
-npx --yes github:BillionsBobby/JevRouter agent setup --agent all --provider openrouter
-npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
-```
-
-Setup injects only the selected provider's environment variable into the Agent configuration. This avoids Claude Code rejecting unset `${VAR}` references while parsing `.mcp.json`.
-
-CLI fallback with a native candidate file:
-
-```bash
-OPENROUTER_API_KEY="your key" \
-npx --yes github:BillionsBobby/JevRouter route \
-  --provider openrouter \
-  --request "route this task to the best capability" \
-  --candidates-file ./jevrouter-candidates.json
-```
+SDK and CLI share provider selection; real Jev calls are the default. SDK callers can explicitly opt into the local cache with `{cache: true}`. Capabilities still execute through the host's permission system. JevRouter does not change a host's current model or create a Subagent by returning an ID.
 
 ## Manifest contract
 
@@ -241,7 +171,7 @@ Measured on 10 Toolathlon tasks (first-5 tool-call prediction vs hand-labeled go
 - Missing permissions, unavailable capabilities and disallowed risk levels are hard filters.
 - API keys are read from environment variables and never written to manifests or decision files.
 - Decision files are append-only; rerunning a route creates a new decision ID.
-- CLI requests reuse a local cache keyed by provider, state, and the exact candidate snapshot; set `JEV_ROUTER_CACHE=0` to disable it.
+- CLI routes call the provider live with cache disabled; SDK caching is opt-in.
 
 ## Scope and evidence
 

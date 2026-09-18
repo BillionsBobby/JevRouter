@@ -1,24 +1,32 @@
 import { CachedJevProvider, DemoProvider, HttpJevProvider, OpenRouterJevProvider } from "./provider.js";
 import type { JevProvider } from "./types.js";
 
-export function createProvider(kind?: string): JevProvider {
-  const apiKey = kind === "openrouter"
-    ? process.env.OPENROUTER_API_KEY ?? process.env.JEV_API_KEY
-    : kind === "typesafe"
-      ? process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY
-      : process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY ?? process.env.OPENROUTER_API_KEY;
-  if (kind === "demo" || (!apiKey && kind !== "typesafe" && kind !== "openrouter")) {
-    if (!apiKey) console.error("No Jev key found; using the labelled offline demo provider");
-    return maybeCache(new DemoProvider());
-  }
-  if (!apiKey) throw new Error("Set TYPESAFE_API_KEY/JEV_API_KEY or use --provider demo");
-  if (kind === "openrouter" || (process.env.OPENROUTER_API_KEY && !process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY)) {
-    return maybeCache(new OpenRouterJevProvider(apiKey));
-  }
-  const endpoint = process.env.JEV_API_URL;
-  return maybeCache(new HttpJevProvider({ apiKey, endpoint, model: process.env.JEV_MODEL ?? "jev-latest" }));
+export type ProviderKind = "typesafe" | "openrouter" | "demo";
+export type KeyName = "JEV_API_KEY" | "TYPESAFE_API_KEY" | "OPENROUTER_API_KEY";
+export interface ProviderOptions {
+  apiKey?: string;
+  endpoint?: string;
+  model?: string;
+  cache?: boolean;
 }
 
-function maybeCache(provider: JevProvider): JevProvider {
-  return process.env.JEV_ROUTER_CACHE === "0" ? provider : new CachedJevProvider(provider);
+/** Resolve provider and key together, never borrowing another provider's credentials. */
+export function providerConfiguration(kind?: string, env: NodeJS.ProcessEnv = process.env): { provider: ProviderKind; key: KeyName } {
+  kind = kind?.trim() || undefined;
+  if (kind !== undefined && !["typesafe", "openrouter", "demo"].includes(kind)) throw new Error("provider must be typesafe, openrouter, or demo");
+  const provider = kind ?? (env.TYPESAFE_API_KEY?.trim() || env.JEV_API_KEY?.trim() ? "typesafe" : env.OPENROUTER_API_KEY?.trim() ? "openrouter" : "typesafe");
+  const key: KeyName = provider === "openrouter" ? "OPENROUTER_API_KEY" : env.TYPESAFE_API_KEY?.trim() ? "TYPESAFE_API_KEY" : "JEV_API_KEY";
+  return { provider: provider as ProviderKind, key };
+}
+
+export function createProvider(kind?: string, options: ProviderOptions = {}): JevProvider {
+  const config = providerConfiguration(kind);
+  if (config.provider === "demo") return new DemoProvider();
+  const apiKey = options.apiKey?.trim() || process.env[config.key]?.trim();
+  if (!apiKey) throw new Error(`Missing ${config.key}. Export it in the Agent's environment; offline tests must explicitly use --provider demo.`);
+  const provider: JevProvider = config.provider === "openrouter"
+    ? new OpenRouterJevProvider(apiKey, options.model ?? process.env.JEV_MODEL ?? "~typesafe/jev-latest")
+    : new HttpJevProvider({ apiKey, endpoint: options.endpoint ?? process.env.JEV_API_URL, model: options.model ?? process.env.JEV_MODEL ?? "jev-latest" });
+  // Live by default. Enabling a cache must be intentional for routing observations.
+  return options.cache === true && process.env.JEV_ROUTER_CACHE !== "0" ? new CachedJevProvider(provider) : provider;
 }

@@ -9,7 +9,9 @@
     "dist",
     "examples",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "skills",
+    "docs/**/*.md"
   ],
   "engines": {
     "node": ">=20"
@@ -30,14 +32,15 @@
     "dev": "tsx src/cli.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "pretest": "npm run build"
   },
   "dependencies": {
-    "tsx": "^4.19.2",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2"
   }
 }

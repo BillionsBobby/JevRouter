@@ -1,74 +1,60 @@
 # Agent integration
 
-JevRouter adds a Jev decision step to an Agent host. The host still performs the selected execution.
+## Start in one command
 
-## One-command setup
-
-Until an npm release is available, run the setup command from GitHub:
+Run in the project in which the Agent will work:
 
 ```bash
-export OPENROUTER_API_KEY="your OpenRouter Jev key"
-npx --yes github:BillionsBobby/JevRouter agent setup --agent all
+JEV_API_KEY="your-typesafe-key" npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-The command creates project-level configuration for Codex and Claude Code:
-
-- `.codex/config.toml` forwards the selected provider key with `env_vars`.
-- `.codex/jevrouter-instructions.md` is loaded through `model_instructions_file` and tells Codex to route meaningful capability choices first.
-- `.mcp.json` expands only the selected provider key at runtime.
-- `CLAUDE.md` gives Claude Code the same routing rule.
-- `.agents/skills/jevrouter-routing/SKILL.md` and `.claude/skills/jevrouter-routing/SKILL.md` provide the reusable Skill procedure, including the CLI fallback.
-
-The key is never written into either file. Restart the Agent after setup.
-
-Check the setup without making changes:
+For OpenRouter and Claude Code:
 
 ```bash
-OPENROUTER_API_KEY="your key" npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
+OPENROUTER_API_KEY="your-key" npx --yes github:BillionsBobby/JevRouter agent start --agent claude --provider openrouter
 ```
 
-Both agents should report `configured: true` and an empty `issues` array.
+The command performs a small live Jev connection check, installs a Skill and project instructions, and launches the installed host CLI with the same environment. Each check sends a labelled two-option connectivity request and may incur an API charge. It does not route a user task or fabricate a capability catalog. The Agent's own model account is separate from the Jev key.
 
-After JevRouter is published to npm, set `JEVROUTER_PACKAGE=jevrouter` before running setup to use the package name.
+`agent setup` installs without launching. Its default target is both Codex and Claude; `--agent codex|claude` restricts it. `--skip-check` is an explicit offline install and requires later validation. `export KEY=...; ... setup` retains the key for future terminal commands. Desktop hosts must also be launched with that environment.
 
-When using OpenRouter, setup detects `OPENROUTER_API_KEY` automatically. You can make the provider explicit with `--provider openrouter` or `--provider typesafe`. Only the selected provider environment variable is injected, so Claude Code does not see unresolved `${VAR}` references.
+## Installed files
 
-The CLI fallback accepts the Agent's real candidates without requiring a registry:
+| File | Purpose |
+|---|---|
+| `AGENTS.md` or existing nonempty `AGENTS.override.md` | Codex project routing rule |
+| `CLAUDE.md` | Claude Code project routing rule |
+| `.agents/skills/jevrouter/SKILL.md` | Codex Skill (`$jevrouter`) |
+| `.claude/skills/jevrouter/SKILL.md` | Claude Skill (`/jevrouter`) |
+| Each Skill's `scripts/route.mjs` | Invokes the installed CLI in the project directory |
+| `.jevrouter/integration-v2.json` | Non-secret provider/key-name and launcher metadata |
 
-```bash
-OPENROUTER_API_KEY="your key" \
-npx --yes github:BillionsBobby/JevRouter route \
-  --provider openrouter \
-  --request "choose a research capability" \
-  --candidates-file ./jevrouter-candidates.json
-```
+Existing project instruction bytes are backed up and preserved, with a routing block appended exactly once. Conflicting Skill/config files produce a separate proposal and an error; nothing is silently overwritten. Repeating an identical setup does not duplicate blocks. If the package install/cache moves or is removed, reinstall at a stable location and review the new proposed launcher.
 
-## Runtime flow
+Legacy MCP configurations remain unchanged by default. The v2 rule uses CLI, so it also works when old MCP credentials are unavailable. It never writes `model_instructions_file` or replaces the host's base prompt.
 
-1. The Agent receives a user request.
-2. Before choosing a meaningful model, Tool, or Subagent, it calls `jev_route`.
-3. The call includes the request and native candidate descriptors when the host can provide them.
-4. Jev returns a typed Choice with probabilities and confidence.
-5. JevRouter applies availability, permission, risk, and confirmation policy.
-6. The Agent executes the returned `selected` capability when status permits.
-7. `no_decision` and `needs_confirmation` remain host-visible states; the Agent must not guess around them.
+## What a routed task looks like
 
-The MCP server is decision-only. It does not invoke the selected Tool or Subagent implicitly.
+1. The host reads project instructions and the Skill.
+2. It announces JevRouter routing and submits the actual task plus real, currently available tools/models/subagents via `route --stdin`.
+3. JevRouter prints `START`, calls Jev, applies policy, saves a decision receipt, and prints `END` with the status and ID.
+4. The host reports the ID/status and performs the selected operation subject to host permissions. It gathers the observation before deciding whether another routing call is needed.
 
-## MCP tools
+The receipt contains the raw Jev response, candidate probabilities, policy fields, `runtime.source`, duration and cache status. The host's execution is not claimed as verified by that receipt. `no_decision` and `needs_confirmation` require explicit handling. Missing keys never silently activate demo; use `--provider demo` only for labelled offline tests.
 
-- `jev_route`: route a request across model, Subagent, Skill, MCP Tool, CLI, or DSH candidates.
-- `jev_capabilities`: list capabilities registered in the local `.jevrouter` registry.
+No API can discover a host's private tool inventory just from a Jev key: the Skill tells the host to supply its current candidates. Do not route an interview task using a copied GitHub-only example registry. CLI supports stdin, `--candidates` JSON, `--candidates-file` JSON/YAML, or an explicitly populated registry. Models and Subagents must already be callable by the host.
 
-Native OpenAI Function Tool descriptors are accepted directly:
+## Diagnostics and optional MCP
 
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "search_web",
-    "description": "Search the web for source material",
-    "parameters": { "type": "object" }
-  }
-}
-```
+`agent doctor` performs read-only local configuration/Skill/launcher/key-presence checks, with `scope: local_configuration_only`. It cannot prove that a running host has loaded instructions. `agent doctor --live` also calls Jev and returns a separately labelled connection check. Invalid setup has a nonzero exit code.
+
+`agent setup --with-mcp` additionally writes `.codex/config.toml` and `.mcp.json`. It references the installed CLI directly, forwards one selected key, and does not alter base prompts. Existing differing MCP files produce proposals for manual merge; the default CLI Skill does not need them.
+
+After starting a new Agent session, use `$jevrouter` or `/jevrouter` explicitly to validate a first real task. Implicit triggering depends on the host following project instructions; this is not a tool interception layer. Host approval, trust, and network restrictions remain in force.
+
+## Upstream contracts
+
+- [Codex Skills](https://developers.openai.com/codex/skills)
+- [Codex AGENTS.md](https://developers.openai.com/codex/guides/agents-md)
+- [Claude Code Skills](https://code.claude.com/docs/en/skills)
+- [Jev Choice API](https://docs.typesafe.ai/primitives/choice)

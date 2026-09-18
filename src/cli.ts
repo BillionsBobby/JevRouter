@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import type { CapabilityManifest, RouteInput } from "./types.js";
 import { startMcpServer } from "./mcp-server.js";
 import { doctorAgents, setupAgents } from "./agent-setup.js";
 import { parse } from "yaml";
+import { probeJev, runRouteRequest } from "./route-command.js";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -77,30 +79,40 @@ async function discover(args: string[]): Promise<void> {
 }
 
 async function route(args: string[]): Promise<void> {
-  const request = option(args, "--request");
-  if (!request) throw new Error("usage: jevrouter route --request \"...\" [--provider demo|typesafe]");
-  const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
-  const provider = createProvider(option(args, "--provider"));
-  const candidates = await loadCandidates(option(args, "--candidates-file"));
-  const actorPermissions = option(args, "--actor-permissions")?.split(",").map((value) => value.trim()).filter(Boolean);
-  const actor = option(args, "--actor");
-  const inputText = option(args, "--input");
-  const input = inputText === undefined ? undefined : JSON.parse(inputText);
-  const result = await new JevRouter(provider, policy).route({ request, actor, actor_permissions: actorPermissions, input }, candidates);
-  const outputPath = await saveDecision(result);
-  console.log(JSON.stringify({ ...result, saved_to: outputPath }, null, 2));
+  let payload: Record<string, unknown>;
+  if (args.includes("--stdin")) {
+    if (process.stdin.isTTY) throw new Error("--stdin requires a piped JSON request");
+    payload = JSON.parse(await readText(process.stdin)) as Record<string, unknown>;
+  } else {
+    const request = option(args, "--request");
+    const candidatesFile = option(args, "--candidates-file");
+    const inlineCandidates = option(args, "--candidates");
+    if (inlineCandidates && candidatesFile) throw new Error("Use --candidates or --candidates-file, not both");
+    let candidates: unknown;
+    if (candidatesFile || inlineCandidates) {
+      const parsed = parse(candidatesFile ? await readFile(candidatesFile, "utf8") : inlineCandidates!);
+      candidates = Array.isArray(parsed) ? parsed : parsed?.candidates;
+      if (!Array.isArray(candidates)) throw new Error("Candidates must be an array or { candidates: [...] }");
+    }
+    const input = option(args, "--input");
+    const context = option(args, "--context");
+    payload = { request, candidates, input: input === undefined ? undefined : JSON.parse(input), context: context === undefined ? undefined : JSON.parse(context), actor: option(args, "--actor"), actor_permissions: option(args, "--actor-permissions")?.split(",").filter(Boolean) };
+  }
+  const result = await runRouteRequest(payload, root, { provider: option(args, "--provider"), policy: option(args, "--policy") }, message => console.error(message));
+  console.log(JSON.stringify(result, null, 2));
+  process.exitCode = result.error ? 1 : result.status === "selected" ? 0 : 2;
 }
 
-async function loadCandidates(filePath?: string): Promise<CapabilityManifest[]> {
-  if (!filePath) return await registry.list();
-  const parsed = parse(await readFile(filePath, "utf8")) as unknown;
-  const values = Array.isArray(parsed)
-    ? parsed
-    : parsed && typeof parsed === "object" && Array.isArray((parsed as { candidates?: unknown }).candidates)
-      ? (parsed as { candidates: unknown[] }).candidates
-      : null;
-  if (!values) throw new Error(`candidates file must be an array or { candidates: [...] }: ${filePath}`);
-  return values.map((candidate, index) => normalizeCapability(candidate, `${filePath}[${index}]`));
+async function readText(stream: AsyncIterable<Buffer | string>): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += data.length;
+    if (size > 1_000_000) throw new Error("Input exceeds 1 MB");
+    chunks.push(data);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function plan(args: string[]): Promise<void> {
@@ -171,27 +183,42 @@ async function serveMcp(args: string[]): Promise<void> {
 }
 
 async function agent(args: string[]): Promise<void> {
-  if (args[0] === "doctor") {
-    const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
-    if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("usage: jevrouter agent doctor --agent codex|claude|all");
-    const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
-    if (provider !== undefined && provider !== "typesafe" && provider !== "openrouter") throw new Error("--provider must be typesafe or openrouter");
-    console.log(JSON.stringify(await doctorAgents(target, process.cwd(), provider), null, 2));
+  const action = args[0];
+  if (!["setup", "doctor", "start"].includes(action)) throw new Error("usage: jevrouter agent setup|doctor|start [--agent codex|claude|all]");
+  const target = (option(args, "--agent") ?? "all") as "codex" | "claude" | "all";
+  if (!["codex", "claude", "all"].includes(target)) throw new Error("--agent must be codex, claude, or all");
+  if (action === "start" && target === "all") throw new Error("agent start requires --agent codex or --agent claude");
+  const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
+  if (provider !== undefined && !["typesafe", "openrouter"].includes(provider)) throw new Error("--provider must be typesafe or openrouter");
+  if (action === "doctor") {
+    const results = await doctorAgents(target, root, provider);
+    const live = args.includes("--live") ? await probeJev(provider, m => console.error(m)) : null;
+    console.log(JSON.stringify({ configuration: results, live }, null, 2));
+    if (results.some(r => !r.configured)) process.exitCode = 1;
     return;
   }
-  if (args[0] !== "setup") throw new Error("usage: jevrouter agent setup|doctor --agent codex|claude|all");
-  const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
-  if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("--agent must be codex, claude, or all");
-  const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
-  if (provider !== undefined && provider !== "typesafe" && provider !== "openrouter") throw new Error("--provider must be typesafe or openrouter");
-  const results = await setupAgents(target, process.cwd(), provider);
-  for (const result of results) console.log(`${result.agent}: ${result.status} ${result.path}`);
-  console.log("Export one of JEV_API_KEY, TYPESAFE_API_KEY, or OPENROUTER_API_KEY, then restart the Agent. Keys are not written to these files.");
+  const check = args.includes("--skip-check") ? null : await probeJev(provider, m => console.error(m));
+  const results = await setupAgents(target, root, provider, { withMcp: args.includes("--with-mcp") });
+  console.log(JSON.stringify({ status: "installed", check, files: results }, null, 2));
+  console.error("JevRouter READY. Use $jevrouter in Codex or /jevrouter in Claude Code. Keep the key exported in the Agent environment. Setup does not route later tasks by itself.");
+  if (action === "start") {
+    const prompt = option(args, "--request");
+    const hostArgs = prompt ? ["--", prompt] : [];
+    console.error(`JevRouter START host=${target} (key inherited; no key stored)`);
+    process.exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn(target, hostArgs, { cwd: root, env: process.env, stdio: "inherit", shell: false });
+      child.once("error", () => reject(new Error(`${target} is not installed or could not start. Skill installed; launch the host after installing it.`)));
+      child.once("exit", code => resolve(code ?? 1));
+    });
+  }
 }
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`${name} requires a value`);
+  return value;
 }
 
 async function writeIfMissing(path: string, content: string): Promise<void> {
@@ -225,12 +252,13 @@ Commands:
   capability list
   discover [--skills <dir>] [--mcp <mcp.json>] [--cli git,docker] [--dsh <dir-or-file>]
   decision show <decision-id>
-  route --request "..." [--candidates-file ./candidates.json] [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter]
+  route --stdin | --request "..." [--candidates-file ./candidates.json] [--candidates JSON] [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter]
   plan --request "..." [--steps 5] [--mode batch|serial] [--provider demo|typesafe|openrouter]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
-  agent setup --agent codex|claude|all [--provider typesafe|openrouter]  configure the Agent MCP entrypoint
-  agent doctor --agent codex|claude|all      verify configuration, instructions, and key availability
+  agent setup [--agent codex|claude|all] [--provider typesafe|openrouter] [--skip-check] [--with-mcp]
+  agent start --agent codex|claude [--request "..."]  check Jev, install Skill, launch host
+  agent doctor [--agent codex|claude|all] [--live]   configuration check; optional real Jev probe
 
 Environment:
   TYPESAFE_API_KEY or JEV_API_KEY   official Jev API key
