@@ -17,6 +17,10 @@ TypeSafe documents Jev as a System One model: structured state in, typed decisio
 
 The core integration is the one-call SDK or CLI. MCP is an optional compatibility adapter for Agents that already load tools through MCP; it exposes one `jev_route` tool and does not execute the selected capability implicitly.
 
+![From Jev API to JevRouter](docs/assets/jev-api-vs-jevrouter.png)
+
+The distinction is architectural: **Jev provides the semantic decision**, while **JevRouter turns that decision into an agent workflow**. With the API alone, the caller still has to define state, options, tool catalogs, confidence handling, integrations, and the agent loop. JevRouter accepts a high-level goal, selects and coordinates the relevant capabilities, applies policy, and returns a usable result. The same decision model remains underneath; the developer experience moves from individual choices to complete orchestration.
+
 ## Benchmark snapshot
 
 We evaluated Jev on 10 Toolathlon tasks by predicting each task's first five ordered tool calls, comparing it with DeepSeek V4.1 Flash. In serial mode, Jev reached **38% position-wise accuracy** versus 24%, achieved a **0.9 mean longest common prefix** versus 0.5, ran about **5.5× faster** (1.58s vs 8.65s per task), and cost about **7× less** ($0.0058 vs $0.0407 for 10 tasks). The experiment measures ordered routing decisions, not end-to-end task completion.
@@ -215,6 +219,10 @@ JevRouter 是一个本地优先的 Agent 能力路由器。它将模型、Subage
 TypeSafe 将 Jev 定义为 System One 模型：输入结构化状态，输出带概率分布和置信度的类型化决策。因此 Jev 适合作为工具前的快速决策层，而普通推理模型可以继续负责执行或兜底。JevRouter 明确保留这条边界，默认只做决策，不隐式执行能力。
 
 核心集成是一次调用的 SDK 或 CLI。MCP 是可选兼容适配器，向已经通过 MCP 加载工具的 Agent 暴露一个 `jev_route` 工具，但不会隐式执行选中的能力。
+
+![从 Jev API 到 JevRouter](docs/assets/jev-api-vs-jevrouter.png)
+
+这张图说明了两层的分工：**Jev 提供语义决策能力**，**JevRouter 将决策组织成 Agent 工作流**。只使用 API 时，调用方仍需自行定义状态、选项、工具目录、置信度处理、工具集成和 Agent 循环；使用 JevRouter 时，只需描述目标，路由器负责选择和编排相关能力、执行策略检查，并返回可使用的结果。底层仍是同一个决策模型，但开发体验从单次选择提升为完整编排。
 
 ## 基准结果概览
 
