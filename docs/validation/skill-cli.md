@@ -17,6 +17,12 @@ An earlier test prohibited external API use. The host respected that restriction
 
 Claude Code was not installed in this validation environment. Its generated Skill/instructions, CLI launcher, and key inheritance were checked with integration tests; a live Claude session is not claimed.
 
+## GitHub install path
+
+Installed the actual GitHub package at commit `1d68b1f` into a fresh project using `npx --yes github:BillionsBobby/JevRouter#1d68b1f agent setup --provider openrouter`. The live connectivity check passed, both Skill files were installed without MCP, and doctor reported no local configuration issues. The installed package's helper then routed a two-candidate source-finding request through live Jev: `dec_682bae04-5d79-43d8-8583-c56f47469bfd`, selected `search_web`, 759 ms, cache disabled. The resulting JSON receipt reports `provider_response_received: true`.
+
+A separate packed-package consumer imported the SDK and ran the CLI without development dependencies. The production CLI requires only `yaml`; `tsx` is used for development tests.
+
 ## Automated coverage
 
 `npm test` builds production JavaScript and checks process-level setup, stdin routing and failure exit codes. Provider transports in these automated tests are explicitly stubbed and do not establish live model accuracy.
