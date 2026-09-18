@@ -207,19 +207,15 @@ test("accepts an OpenAI-style function tool without a manifest conversion step",
 });
 
 test("renders key-safe Codex and Claude Agent setup", () => {
-  const claude = renderClaudeServer();
+  const claude = renderClaudeServer("openrouter");
   assert.deepEqual(claude, {
     command: "npx",
     args: ["-y", "github:BillionsBobby/JevRouter", "serve-mcp"],
-    env: {
-      JEV_API_KEY: "${JEV_API_KEY}",
-      TYPESAFE_API_KEY: "${TYPESAFE_API_KEY}",
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}",
-    },
+    env: { OPENROUTER_API_KEY: "${OPENROUTER_API_KEY}" },
   });
-  const codex = renderCodexConfigBlock();
+  const codex = renderCodexConfigBlock("openrouter");
   assert.match(codex, /\[mcp_servers\.jevrouter\]/);
-  assert.match(codex, /env_vars = \["JEV_API_KEY", "TYPESAFE_API_KEY", "OPENROUTER_API_KEY"\]/);
+  assert.match(codex, /env_vars = \["OPENROUTER_API_KEY"\]/);
   assert.match(codex, /github:BillionsBobby\/JevRouter/);
   assert.match(codex, /model_instructions_file = "jevrouter-instructions.md"/);
   assert.doesNotMatch(codex, /sk-|JEV_API_KEY =/);

@@ -126,6 +126,15 @@ npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
 
 The generated MCP command uses the public GitHub package source so this works before an npm release. After `jevrouter` is published, set `JEVROUTER_PACKAGE=jevrouter` before setup to use the npm package instead.
 
+When using OpenRouter, setup detects `OPENROUTER_API_KEY` automatically. You can also make the provider explicit:
+
+```bash
+npx --yes github:BillionsBobby/JevRouter agent setup --agent all --provider openrouter
+npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
+```
+
+Setup injects only the selected provider's environment variable into the Agent configuration. This avoids Claude Code rejecting unset `${VAR}` references while parsing `.mcp.json`.
+
 ## Manifest contract
 
 ```json

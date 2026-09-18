@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type AgentTarget = "codex" | "claude" | "all";
+export type AgentProvider = "typesafe" | "openrouter";
 
 export interface AgentSetupResult {
   agent: "codex" | "claude";
@@ -31,25 +32,28 @@ Follow the returned status: execute only the returned 'selected' capability when
 
 ${instructionMarker}`;
 
-export async function setupAgents(target: AgentTarget, root = process.cwd()): Promise<AgentSetupResult[]> {
+export async function setupAgents(target: AgentTarget, root = process.cwd(), provider?: AgentProvider): Promise<AgentSetupResult[]> {
+  const keyName = resolveKeyName(provider);
   const targets = target === "all" ? (["codex", "claude"] as const) : ([target] as const);
   const results: AgentSetupResult[] = [];
   for (const agent of targets) {
-    results.push(agent === "codex" ? await setupCodex(root) : await setupClaude(root));
+    results.push(agent === "codex" ? await setupCodex(root, keyName) : await setupClaude(root, keyName));
   }
   return results;
 }
 
-export function renderClaudeServer(): Record<string, unknown> {
+export function renderClaudeServer(provider?: AgentProvider): Record<string, unknown> {
+  const keyName = resolveKeyName(provider);
   return {
     command: "npx",
     args: serverArgs,
-    env: Object.fromEntries(keyNames.map((name) => [name, `\${${name}}`])),
+    env: { [keyName]: `\${${keyName}}` },
   };
 }
 
-export function renderCodexConfigBlock(): string {
-  return `[mcp_servers.jevrouter]\ncommand = "npx"\nargs = ["-y", "${serverPackage}", "serve-mcp"]\nenv_vars = [${keyNames.map((name) => `"${name}"`).join(", ")}]\nmodel_instructions_file = "jevrouter-instructions.md"\n`;
+export function renderCodexConfigBlock(provider?: AgentProvider): string {
+  const keyName = resolveKeyName(provider);
+  return `[mcp_servers.jevrouter]\ncommand = "npx"\nargs = ["-y", "${serverPackage}", "serve-mcp"]\nenv_vars = ["${keyName}"]\nmodel_instructions_file = "jevrouter-instructions.md"\n`;
 }
 
 export function renderRoutingInstructions(): string {
@@ -72,9 +76,9 @@ export async function doctorAgents(target: AgentTarget, root = process.cwd()): P
   }));
 }
 
-async function setupClaude(root: string): Promise<AgentSetupResult> {
+async function setupClaude(root: string, keyName: typeof keyNames[number]): Promise<AgentSetupResult> {
   const path = join(root, ".mcp.json");
-  const server = renderClaudeServer();
+  const server = renderClaudeServer(keyName === "OPENROUTER_API_KEY" ? "openrouter" : "typesafe");
   const instructionPath = join(root, "CLAUDE.md");
   try {
     const current = JSON.parse(await readFile(path, "utf8")) as { mcpServers?: Record<string, unknown> };
@@ -100,11 +104,11 @@ async function appendJsonServer(path: string, server: Record<string, unknown>): 
   await writeFile(path, `${JSON.stringify({ ...current, mcpServers: { ...(current.mcpServers ?? {}), jevrouter: server } }, null, 2)}\n`);
 }
 
-async function setupCodex(root: string): Promise<AgentSetupResult> {
+async function setupCodex(root: string, keyName: typeof keyNames[number]): Promise<AgentSetupResult> {
   const directory = join(root, ".codex");
   const path = join(directory, "config.toml");
   await mkdir(directory, { recursive: true });
-  const block = renderCodexConfigBlock();
+  const block = renderCodexConfigBlock(keyName === "OPENROUTER_API_KEY" ? "openrouter" : "typesafe");
   await writeIfMissing(join(directory, "jevrouter-instructions.md"), renderRoutingInstructions());
   try {
     const current = await readFile(path, "utf8");
@@ -144,4 +148,12 @@ async function readIfExists(path: string): Promise<string | null> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+function resolveKeyName(provider?: AgentProvider): typeof keyNames[number] {
+  if (provider === "openrouter") return "OPENROUTER_API_KEY";
+  if (provider === "typesafe") return "TYPESAFE_API_KEY";
+  if (process.env.OPENROUTER_API_KEY && !process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY) return "OPENROUTER_API_KEY";
+  if (process.env.TYPESAFE_API_KEY && !process.env.JEV_API_KEY) return "TYPESAFE_API_KEY";
+  return "JEV_API_KEY";
 }

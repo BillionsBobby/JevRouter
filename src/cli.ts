@@ -167,7 +167,9 @@ async function agent(args: string[]): Promise<void> {
   if (args[0] !== "setup") throw new Error("usage: jevrouter agent setup|doctor --agent codex|claude|all");
   const target = option(args, "--agent") as "codex" | "claude" | "all" | undefined;
   if (!target || !["codex", "claude", "all"].includes(target)) throw new Error("--agent must be codex, claude, or all");
-  const results = await setupAgents(target);
+  const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
+  if (provider !== undefined && provider !== "typesafe" && provider !== "openrouter") throw new Error("--provider must be typesafe or openrouter");
+  const results = await setupAgents(target, process.cwd(), provider);
   for (const result of results) console.log(`${result.agent}: ${result.status} ${result.path}`);
   console.log("Export one of JEV_API_KEY, TYPESAFE_API_KEY, or OPENROUTER_API_KEY, then restart the Agent. Keys are not written to these files.");
 }
@@ -212,7 +214,7 @@ Commands:
   plan --request "..." [--steps 5] [--mode batch|serial] [--provider demo|typesafe|openrouter]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
-  agent setup --agent codex|claude|all       configure the Agent MCP entrypoint
+  agent setup --agent codex|claude|all [--provider typesafe|openrouter]  configure the Agent MCP entrypoint
   agent doctor --agent codex|claude|all      verify configuration, instructions, and key availability
 
 Environment:

@@ -30,6 +30,8 @@ Both agents should report `configured: true` and an empty `issues` array.
 
 After JevRouter is published to npm, set `JEVROUTER_PACKAGE=jevrouter` before running setup to use the package name.
 
+When using OpenRouter, setup detects `OPENROUTER_API_KEY` automatically. You can make the provider explicit with `--provider openrouter` or `--provider typesafe`. Only the selected provider environment variable is injected, so Claude Code does not see unresolved `${VAR}` references.
+
 ## Runtime flow
 
 1. The Agent receives a user request.
