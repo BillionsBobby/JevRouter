@@ -24,6 +24,8 @@ const routeInputSchema = {
   additionalProperties: false,
 } as const;
 
+const agentInstructions = "Before choosing a model, tool, or subagent for a meaningful task, call jev_route with the user request and the available candidates. Pass native function-tool descriptors when available. Respect selected, needs_confirmation, and no_decision; never execute a filtered or unresolved capability, and do not treat probabilities as permission. JevRouter returns a decision handoff; the Agent remains responsible for the actual execution.";
+
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
   process.stdout.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code !== "EPIPE") throw error;
@@ -51,6 +53,7 @@ export async function handleMessage(message: JsonRpcMessage, options: McpServerO
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
         serverInfo: { name: "jevrouter", version: "0.1.0" },
+        instructions: agentInstructions,
       });
     }
     if (message.method === "ping") return result(message.id, {});
@@ -94,7 +97,7 @@ function toolDefinitions() {
   return [
     {
       name: "jev_route",
-      description: "Use JevRouter to choose the best model, tool, or subagent for a request. Returns Jev probabilities and policy decisions without executing the capability.",
+      description: "Call this before choosing a meaningful model, tool, or subagent. Pass the current candidate descriptors; JevRouter returns selected, confidence, probabilities, and policy status without executing anything.",
       inputSchema: routeInputSchema,
     },
     {

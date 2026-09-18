@@ -8,6 +8,7 @@ import { CachedJevProvider } from "../src/provider.js";
 import { route as sdkRoute } from "../src/api.js";
 import { handleMessage } from "../src/mcp-server.js";
 import { CapabilityRegistry, defaultPolicy } from "../src/manifest.js";
+import { renderClaudeServer, renderCodexConfigBlock } from "../src/agent-setup.js";
 import { resolve } from "node:path";
 
 const candidates: CapabilityManifest[] = [
@@ -173,6 +174,8 @@ test("exposes the same router through the optional MCP adapter", async () => {
   const listed = await handleMessage({ jsonrpc: "2.0", id: 1, method: "tools/list" }, options);
   const tools = (listed?.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
   assert.deepEqual(tools, ["jev_route", "jev_capabilities"]);
+  const initialized = await handleMessage({ jsonrpc: "2.0", id: 0, method: "initialize" }, options);
+  assert.match(String((initialized?.result as { instructions: string }).instructions), /call jev_route/);
   const called = await handleMessage({
     jsonrpc: "2.0",
     id: 2,
@@ -201,4 +204,17 @@ test("accepts an OpenAI-style function tool without a manifest conversion step",
   );
   assert.equal(result.decision.selected, "github.issue.search");
   assert.equal(result.decision.candidates[0]?.type, "mcp_tool");
+});
+
+test("renders key-safe Codex and Claude Agent setup", () => {
+  const claude = renderClaudeServer();
+  assert.deepEqual(claude, {
+    command: "npx",
+    args: ["-y", "jevrouter", "serve-mcp"],
+    env: { JEV_API_KEY: "${JEV_API_KEY}" },
+  });
+  const codex = renderCodexConfigBlock();
+  assert.match(codex, /\[mcp_servers\.jevrouter\]/);
+  assert.match(codex, /env_vars = \["JEV_API_KEY"\]/);
+  assert.doesNotMatch(codex, /sk-|JEV_API_KEY =/);
 });

@@ -98,6 +98,24 @@ For Codex, Claude, or another MCP-native Agent, run the optional stdio adapter:
 
 The Agent can call `jev_route` with its current `candidates` array. A candidate can have `type: "model"`, `"subagent"`, `"mcp_tool"`, `"skill"`, `"cli"`, or `"dsh"`; the routing contract is the same.
 
+### One-command Agent setup
+
+For a trusted project, generate the Codex and/or Claude Code MCP entry without writing the key to disk:
+
+```bash
+export JEV_API_KEY="your Jev key"
+npx jevrouter agent setup --agent all
+```
+
+This creates or updates project-level `.codex/config.toml` and `.mcp.json` additively. Codex receives `JEV_API_KEY` through `env_vars`; Claude Code uses `${JEV_API_KEY}` expansion. Restart the Agent after setup. The MCP server instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
+
+For only one host:
+
+```bash
+npx jevrouter agent setup --agent codex
+npx jevrouter agent setup --agent claude
+```
+
 ## Manifest contract
 
 ```json

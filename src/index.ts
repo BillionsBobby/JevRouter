@@ -7,3 +7,4 @@ export * from "./router.js";
 export * from "./runtime.js";
 export * from "./mcp-server.js";
 export * from "./api.js";
+export * from "./agent-setup.js";
