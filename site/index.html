@@ -8,13 +8,15 @@
   <title>JevRouter — Faster Agent Decisions</title>
   <style>
     :root {
-      --ink: #fff8fb;
-      --muted: #d9b9c8;
-      --line: rgba(255, 188, 218, .24);
-      --panel: rgba(57, 14, 35, .72);
-      --pink: #ff6eb4;
-      --soft-pink: #ffc2df;
-      --deep: #12070d;
+      --ink: #f8f7fb;
+      --muted: #a8a4b4;
+      --line: rgba(255, 255, 255, .12);
+      --panel: rgba(20, 20, 32, .66);
+      --pink: #ff6bb5;
+      --soft-pink: #ffb7dc;
+      --lime: #c9f36b;
+      --deep: #08080d;
+      --violet: #8e7dff;
       --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
       --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -22,7 +24,9 @@
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
+      min-width: 320px;
       background: var(--deep);
+      background-image: radial-gradient(circle at 50% -20%, rgba(112, 82, 190, .24), transparent 40%), radial-gradient(circle at 8% 44%, rgba(255, 89, 165, .1), transparent 30%);
       color: var(--ink);
       font-family: var(--sans);
       -webkit-font-smoothing: antialiased;
@@ -35,7 +39,10 @@
       align-items: center;
       justify-content: space-between;
       border-bottom: 1px solid var(--line);
+      position: relative;
+      z-index: 2;
     }
+    .top-actions { display: inline-flex; align-items: center; gap: 22px; }
     .wordmark {
       display: inline-flex;
       align-items: center;
@@ -45,13 +52,17 @@
       font-size: 15px;
       font-weight: 650;
       letter-spacing: .02em;
+      transition: color .2s ease;
     }
+    .wordmark:hover, .wordmark:focus-visible { color: var(--pink); }
     .mark {
       width: 26px;
       height: 26px;
       display: grid;
       place-items: center;
-      border: 1px solid var(--pink);
+      border: 1px solid rgba(255, 107, 181, .9);
+      background: rgba(255, 107, 181, .08);
+      box-shadow: 0 0 22px rgba(255, 107, 181, .22);
       color: var(--pink);
       font-family: var(--mono);
       font-size: 11px;
@@ -70,34 +81,50 @@
     }
     .github:hover, .github:focus-visible { color: var(--pink); transform: translateY(-1px); }
     .github svg { width: 18px; height: 18px; fill: currentColor; }
+    .build-link { color: var(--muted); font: 11px var(--mono); letter-spacing: .02em; text-decoration: none; transition: color .2s ease; }
+    .build-link span { color: var(--pink); font-size: 16px; margin-left: 5px; }
+    .build-link:hover, .build-link:focus-visible { color: var(--ink); }
     main { overflow: hidden; }
-    #flow-canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .7; }
+    #flow-canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .72; mix-blend-mode: screen; }
+    .ambient { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+    .ambient::before, .ambient::after { content: ""; position: absolute; width: 46vw; height: 46vw; min-width: 360px; min-height: 360px; border-radius: 50%; filter: blur(70px); opacity: .15; animation: breathe 12s ease-in-out infinite alternate; }
+    .ambient::before { top: -24vw; left: -14vw; background: var(--pink); }
+    .ambient::after { right: -18vw; top: 30vh; background: var(--violet); animation-delay: -5s; }
+    @keyframes breathe { from { transform: scale(.9) translate3d(0, 0, 0); } to { transform: scale(1.12) translate3d(4vw, 3vh, 0); } }
     .hero {
-      min-height: 500px;
+      min-height: 610px;
       display: grid;
       align-items: start;
-      padding: 76px 0 58px;
+      padding: 108px 0 88px;
       position: relative;
       text-align: center;
     }
-    .hero > div { position: relative; z-index: 1; width: 100%; }
+    .hero > div { position: relative; z-index: 1; width: 100%; min-width: 0; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 25px; color: var(--lime); font: 11px var(--mono); letter-spacing: .18em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 26px; height: 1px; background: currentColor; box-shadow: 0 0 12px currentColor; }
     h1 {
       width: 100%;
       margin: 0;
-      font-size: clamp(20px, 3.65vw, 60px);
-      line-height: 1;
-      letter-spacing: -.055em;
+      max-width: none;
+      margin: 0 auto;
+      font-size: clamp(21px, 4.8vw, 64px);
+      line-height: .98;
+      letter-spacing: -.065em;
       font-weight: 500;
       white-space: nowrap;
     }
-    h1 .brand { color: var(--pink); }
-    h1 em { color: var(--soft-pink); font-style: normal; }
+    h1 .brand { color: var(--pink); text-shadow: 0 0 36px rgba(255, 107, 181, .22); }
+    h1 em { color: var(--soft-pink); font-style: normal; animation: signalBlink 2.4s ease-in-out infinite; text-shadow: 0 0 0 rgba(255, 183, 220, 0); }
+    @keyframes signalBlink { 0%, 100% { opacity: 1; text-shadow: 0 0 0 rgba(255, 183, 220, 0); } 46% { opacity: .78; text-shadow: 0 0 18px rgba(255, 183, 220, .72); } 54% { opacity: 1; text-shadow: 0 0 30px rgba(255, 107, 181, .8); } }
+    .hero-copy { max-width: 630px; margin: 23px auto 0; color: var(--muted); font-size: 16px; line-height: 1.65; }
     .install {
-      width: min(650px, 100%);
-      margin: 46px auto 0;
-      border: 1px solid var(--line);
+      width: min(760px, 100%);
+      max-width: 100%;
+      min-width: 0;
+      margin: 72px auto 0;
+      border: 1px solid rgba(255, 255, 255, .16);
       background: var(--panel);
-      box-shadow: 0 22px 80px rgba(0, 0, 0, .26);
+      box-shadow: 0 24px 100px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 107, 181, .05) inset;
       backdrop-filter: blur(16px);
     }
     .install-head {
@@ -107,72 +134,139 @@
       align-items: center;
       padding: 0 13px 0 15px;
       border-bottom: 1px solid var(--line);
-      color: #c08ca5;
+      color: #888395;
       font: 10px var(--mono);
       letter-spacing: .1em;
       text-transform: uppercase;
     }
     .copy {
-      border: 0;
-      background: transparent;
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, .16);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .04);
       color: var(--muted);
       cursor: pointer;
       font: 11px var(--mono);
-      padding: 5px 0;
+      padding: 0;
+      transition: color .2s ease, border-color .2s ease, background .2s ease, transform .2s ease;
     }
-    .copy:hover, .copy:focus-visible { color: var(--pink); }
-    pre { margin: 0; padding: 20px 19px 22px; overflow-x: auto; color: var(--ink); font: 13px/1.75 var(--mono); text-align: left; }
+    .copy svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .copy:hover, .copy:focus-visible { color: var(--pink); border-color: rgba(255, 107, 181, .56); background: rgba(255, 107, 181, .1); transform: translateY(-1px); }
+    pre { margin: 0; padding: 22px 22px 24px; overflow-x: hidden; color: var(--ink); font: 13px/1.75 var(--mono); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
     .prompt { color: var(--pink); }
     .string { color: var(--soft-pink); }
-    .routing { padding: 84px 0 110px; border-top: 1px solid var(--line); position: relative; z-index: 1; background: rgba(18, 7, 13, .78); }
-    .routing-heading { margin: 0 0 38px; text-align: center; font-size: clamp(28px, 4.5vw, 54px); line-height: 1; letter-spacing: -.06em; font-weight: 500; }
+    .agent-note { max-width: none; margin: 21px auto 0; color: #b0adbd; font-size: 20px; line-height: 1.45; letter-spacing: -.02em; white-space: nowrap; }
+    .agent-note strong { color: var(--pink); font-weight: 600; text-shadow: 0 0 18px rgba(255, 107, 181, .25); }
+    .routing { padding: 100px 0 124px; border-top: 1px solid var(--line); position: relative; z-index: 1; background: linear-gradient(180deg, rgba(8, 8, 13, .5), rgba(8, 8, 13, .92)); }
+    .routing-heading { margin: 0 0 44px; text-align: center; font-size: clamp(34px, 5vw, 62px); line-height: .98; letter-spacing: -.06em; font-weight: 500; }
     .routing-heading span { color: var(--pink); }
-    .routes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border: 1px solid var(--line); background: var(--line); }
-    .route-card { min-height: 240px; padding: 27px; background: rgba(30, 10, 21, .9); }
-    .route-card:nth-child(2) { background: rgba(47, 12, 30, .9); }
-    .route-card:nth-child(3) { background: rgba(65, 15, 40, .9); }
+    .method-note { margin-top: 58px; padding-top: 22px; border-top: 1px solid var(--line); color: #858190; font: 11px/1.7 var(--mono); letter-spacing: .02em; }
+    .method-note strong { color: var(--soft-pink); font-weight: 500; }
+    .benchmark { display: grid; grid-template-columns: minmax(260px, .72fr) minmax(0, 1.7fr); gap: 14px; margin-bottom: 14px; }
+    .benchmark-intro, .benchmark-data { border: 1px solid var(--line); border-radius: 18px; background: rgba(20, 20, 32, .72); box-shadow: 0 20px 55px rgba(0, 0, 0, .18); }
+    .benchmark-intro { display: flex; flex-direction: column; justify-content: space-between; min-height: 322px; padding: 30px; }
+    .benchmark-kicker { color: var(--lime); font: 11px var(--mono); letter-spacing: .16em; }
+    .benchmark-intro h3 { max-width: 330px; margin: 58px 0 14px; font-size: clamp(28px, 3vw, 42px); line-height: .98; letter-spacing: -.06em; font-weight: 500; }
+    .benchmark-intro p { max-width: 345px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+    .benchmark-stat { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
+    .benchmark-stat strong { display: block; color: var(--ink); font-size: 42px; line-height: 1; letter-spacing: -.06em; }
+    .benchmark-stat span { display: block; margin-top: 8px; color: #898596; font: 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .benchmark-data { min-height: 322px; padding: 30px; }
+    .benchmark-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .benchmark-metric { min-height: 112px; padding: 17px; border: 1px solid rgba(255, 255, 255, .11); border-radius: 14px; background: rgba(7, 9, 14, .62); }
+    .benchmark-metric header { display: flex; justify-content: space-between; color: #7f7b8b; font: 10px var(--mono); letter-spacing: .12em; }
+    .benchmark-metric strong { display: block; margin-top: 24px; color: var(--ink); font-size: 21px; letter-spacing: -.04em; }
+    .benchmark-metric p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .benchmark-divider { height: 1px; margin: 36px 0 22px; background: var(--line); }
+    .benchmark-bars { display: grid; gap: 14px; }
+    .benchmark-bar-label { display: flex; justify-content: space-between; margin-bottom: 7px; color: #9995a5; font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .benchmark-bar-label strong { color: var(--ink); font-weight: 500; }
+    .benchmark-bar { height: 7px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .1); }
+    .benchmark-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--pink), var(--soft-pink)); }
+    .benchmark-bar i.jevs { width: 38%; }
+    .benchmark-bar i.baseline { width: 24%; background: rgba(255, 255, 255, .45); }
+    .routes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .route-card { min-height: 260px; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(145deg, rgba(31, 28, 48, .84), rgba(15, 15, 24, .72)); box-shadow: 0 20px 55px rgba(0, 0, 0, .18); transition: transform .3s ease, border-color .3s ease, box-shadow .3s ease; }
+    .route-card:nth-child(2) { background: linear-gradient(145deg, rgba(51, 24, 55, .84), rgba(18, 15, 27, .72)); }
+    .route-card:nth-child(3) { background: linear-gradient(145deg, rgba(41, 31, 61, .84), rgba(16, 15, 26, .72)); }
+    .route-card:hover { transform: translateY(-5px); border-color: rgba(255, 107, 181, .42); box-shadow: 0 26px 68px rgba(0, 0, 0, .34), 0 0 26px rgba(255, 107, 181, .08); }
     .route-kicker { color: var(--pink); font: 11px var(--mono); letter-spacing: .14em; }
-    .route-card h3 { margin: 58px 0 10px; font-size: 24px; font-weight: 500; letter-spacing: -.04em; }
-    .route-card p { margin: 0; max-width: 250px; color: var(--muted); font-size: 14px; line-height: 1.55; }
-    .toast { position: fixed; left: 50%; bottom: 25px; transform: translate(-50%, 16px); opacity: 0; padding: 10px 13px; border: 1px solid var(--lime); background: #11170f; color: var(--lime); font: 11px var(--mono); pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+    .route-card h3 { margin: 65px 0 12px; font-size: 25px; font-weight: 500; letter-spacing: -.04em; }
+    .route-card p { margin: 0; max-width: 270px; color: var(--muted); font-size: 14px; line-height: 1.65; }
+    .toast { position: fixed; left: 50%; bottom: 25px; transform: translate(-50%, 16px); opacity: 0; padding: 10px 13px; border: 1px solid var(--lime); border-radius: 999px; background: #11170f; color: var(--lime); font: 11px var(--mono); pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
     .toast.show { opacity: 1; transform: translate(-50%, 0); }
     @media (max-width: 720px) {
-      .shell { width: min(100% - 32px, 620px); }
+      .shell { width: calc(100% - 32px); max-width: 620px; }
       .topbar { height: 64px; }
       .github span { display: none; }
-      .hero { min-height: 500px; padding: 62px 0 58px; }
-      h1 { font-size: clamp(11px, 3.65vw, 42px); letter-spacing: -.06em; }
-      .install { margin-top: 34px; }
+      .hero { min-height: 560px; padding: 76px 0 64px; }
+      h1 { font-size: clamp(16px, 4.8vw, 64px); letter-spacing: -.065em; }
+      .install { margin-top: 52px; }
+      .agent-note { font-size: 18px; white-space: normal; }
       .routing { padding: 65px 0 80px; }
+      .benchmark { grid-template-columns: 1fr; }
+      .benchmark-intro, .benchmark-data { min-height: auto; }
+      .benchmark-grid { grid-template-columns: repeat(2, 1fr); }
       .routes { grid-template-columns: 1fr; }
-      .route-card { min-height: 190px; }
-      .route-card h3 { margin-top: 38px; }
+      .route-card { min-height: 205px; }
+      .route-card h3 { margin-top: 42px; }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body>
+  <div class="ambient" aria-hidden="true"></div>
   <canvas id="flow-canvas" aria-hidden="true"></canvas>
   <header class="shell topbar">
-    <a class="wordmark" href="./" aria-label="JevRouter home"><span class="mark"><span>J</span></span></a>
-    <a class="github" href="https://github.com/BillionsBobby/JevRouter" target="_blank" rel="noreferrer" aria-label="Open JevRouter on GitHub">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.4-1.34-1.77-1.34-1.77-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.48 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.95 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.46 11.46 0 0 1 6.01 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.76.84 1.23 1.91 1.23 3.22 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .7Z"/></svg>
-    </a>
+    <a class="wordmark" href="./" aria-label="JevRouter home">JevRouter</a>
+    <div class="top-actions">
+      <a class="build-link" href="https://github.com/BillionsBobby/JevRouter" target="_blank" rel="noreferrer">Help build the best agent decision layer <span>→</span></a>
+      <a class="github" href="https://github.com/BillionsBobby/JevRouter" target="_blank" rel="noreferrer" aria-label="Open JevRouter on GitHub">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .7a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.4-1.34-1.77-1.34-1.77-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.84 2.8 1.31 3.48 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.34-5.47-5.95 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.46 11.46 0 0 1 6.01 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.76.84 1.23 1.91 1.23 3.22 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58A12 12 0 0 0 12 .7Z"/></svg>
+      </a>
+    </div>
   </header>
   <main>
     <section class="shell hero">
       <div>
-        <h1><span class="brand">JevRouter,</span> Making Every Agent Decision <em>Faster.</em></h1>
+        <h1><span class="brand">JevRouter</span> Make every agent decision <em>faster.</em></h1>
         <div class="install" aria-label="Install and use JevRouter">
-          <div class="install-head"><span></span><button class="copy" type="button" data-copy aria-label="Copy code" title="Copy code">⧉</button></div>
-          <pre><code><span class="prompt">JEV_API_KEY=...</span> <span class="string">npx jevrouter route --request</span> \
+          <div class="install-head"><span>AGENT QUICK START</span><button class="copy" type="button" data-copy aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>
+          <pre><code><span class="prompt">OPENROUTER_API_KEY=your_openrouter_api_key</span> <span class="string">npx -y github:BillionsBobby/JevRouter route --provider openrouter --request</span> \
   <span class="string">"route this task to the best capability"</span></code></pre>
         </div>
+        <p class="agent-note">Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.</p>
       </div>
     </section>
     <section class="routing">
       <div class="shell">
         <h2 class="routing-heading">One request. <span>Smarter routing.</span></h2>
+        <section class="benchmark" aria-labelledby="benchmark-title">
+          <article class="benchmark-intro">
+            <div>
+              <div class="benchmark-kicker">ROUTING BENCHMARK / TOOLATHLON</div>
+              <h3 id="benchmark-title">Ordered decisions, measured.</h3>
+              <p>We compared Jev serial routing with DeepSeek V4.1 Flash across 10 tasks, predicting each task’s first five tool calls.</p>
+            </div>
+            <div class="benchmark-stat"><strong>38%</strong><span>Position-wise hits · Jev serial</span></div>
+          </article>
+          <article class="benchmark-data" aria-label="Jev benchmark results">
+            <div class="benchmark-grid">
+              <div class="benchmark-metric"><header><span>01</span><span>38%</span></header><strong>Position hits</strong><p>Jev serial · 24% baseline</p></div>
+              <div class="benchmark-metric"><header><span>02</span><span>0.9</span></header><strong>Prefix alignment</strong><p>Mean LCP · 0.5 baseline</p></div>
+              <div class="benchmark-metric"><header><span>03</span><span>5.5×</span></header><strong>Faster</strong><p>1.58s vs 8.65s / task</p></div>
+              <div class="benchmark-metric"><header><span>04</span><span>7×</span></header><strong>Lower cost</strong><p>$0.0058 vs ≈$0.0407</p></div>
+            </div>
+            <div class="benchmark-divider"></div>
+            <div class="benchmark-bars">
+              <div><div class="benchmark-bar-label"><span>JEV SERIAL / POSITION-WISE</span><strong>38%</strong></div><div class="benchmark-bar"><i class="jevs"></i></div></div>
+              <div><div class="benchmark-bar-label"><span>DEEPSEEK V4.1 FLASH / POSITION-WISE</span><strong>24%</strong></div><div class="benchmark-bar"><i class="baseline"></i></div></div>
+            </div>
+          </article>
+        </section>
         <div class="routes">
           <article class="route-card">
             <div class="route-kicker">01 / LLM</div>
@@ -190,6 +284,7 @@
             <p>Delegate research, coding, and focused work to the subagent built for the request.</p>
           </article>
         </div>
+        <p class="method-note"><strong>*Method note.</strong> The 99.97% figure is a directional estimate for the same routing workflow when Jev handles the decision instead of GPT-6. It reflects approximate decision-layer token usage under comparable prompts; actual savings vary with task complexity, context length, model settings, and call count.</p>
       </div>
     </section>
   </main>
@@ -208,29 +303,39 @@
       canvas.width = width * ratio;
       canvas.height = height * ratio;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      nodes = Array.from({length: Math.max(22, Math.round(width / 52))}, (_, index) => ({
-        x: (index * 97) % width,
-        y: (index * 53) % height,
-        phase: index * .73,
-        speed: .0012 + (index % 5) * .00035
+      nodes = Array.from({length: Math.max(42, Math.round(width / 25))}, (_, index) => ({
+        x: Math.random() * width,
+        y: Math.random() * height,
+        phase: Math.random() * Math.PI * 2,
+        size: 1 + Math.random() * 1.8,
+        speed: .0004 + Math.random() * .0008
       }));
     }
     function drawFlow(time = 0) {
       context.clearRect(0, 0, width, height);
-      context.strokeStyle = 'rgba(255, 110, 180, .08)';
-      context.lineWidth = 1;
-      const step = 72;
-      for (let x = 0; x < width; x += step) { context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke(); }
-      for (let y = 0; y < height; y += step) { context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke(); }
-      nodes.forEach((node, index) => {
-        const drift = reduceMotion ? 0 : Math.sin(time * node.speed + node.phase) * 18;
-        const x = node.x + drift;
-        const y = node.y + Math.cos(time * node.speed + node.phase) * 12;
-        const next = nodes[(index + 1) % nodes.length];
-        context.strokeStyle = 'rgba(255, 194, 223, .11)';
-        context.beginPath(); context.moveTo(x, y); context.lineTo(next.x, next.y); context.stroke();
-        context.fillStyle = index % 4 === 0 ? 'rgba(255, 110, 180, .72)' : 'rgba(255, 194, 223, .42)';
-        context.fillRect(x - 1, y - 1, 2, 2);
+      const points = nodes.map((node, index) => ({
+        x: node.x + (reduceMotion ? 0 : Math.sin(time * node.speed + node.phase) * 28),
+        y: node.y + (reduceMotion ? 0 : Math.cos(time * node.speed + node.phase) * 20),
+        node,
+        index
+      }));
+      points.forEach((point, index) => {
+        for (let nextIndex = index + 1; nextIndex < points.length; nextIndex += 1) {
+          const next = points[nextIndex];
+          const distance = Math.hypot(point.x - next.x, point.y - next.y);
+          if (distance < 170) {
+            context.strokeStyle = `rgba(211, 175, 255, ${Math.max(0, .14 - distance / 1400)})`;
+            context.lineWidth = .7;
+            context.beginPath(); context.moveTo(point.x, point.y); context.lineTo(next.x, next.y); context.stroke();
+          }
+        }
+        const glow = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, point.node.size * 7);
+        glow.addColorStop(0, point.index % 5 === 0 ? 'rgba(255, 107, 181, .72)' : 'rgba(201, 243, 107, .5)');
+        glow.addColorStop(1, 'rgba(201, 243, 107, 0)');
+        context.fillStyle = glow;
+        context.fillRect(point.x - 8, point.y - 8, 16, 16);
+        context.fillStyle = point.index % 5 === 0 ? 'rgba(255, 157, 210, .85)' : 'rgba(220, 244, 151, .66)';
+        context.beginPath(); context.arc(point.x, point.y, point.node.size / 2, 0, Math.PI * 2); context.fill();
       });
       if (!reduceMotion) window.requestAnimationFrame(drawFlow);
     }
@@ -239,7 +344,7 @@
     drawFlow();
     const button = document.querySelector('[data-copy]');
     const toast = document.querySelector('.toast');
-    const code = 'JEV_API_KEY=... npx jevrouter route --request "route this task to the best capability"';
+    const code = 'OPENROUTER_API_KEY=your_openrouter_api_key npx -y github:BillionsBobby/JevRouter route --provider openrouter --request "route this task to the best capability"';
     button.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(code);
