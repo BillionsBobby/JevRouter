@@ -8,3 +8,5 @@ dist/
 .jevrouter/policy.json
 .env
 .DS_Store
+.codex/
+.mcp.json

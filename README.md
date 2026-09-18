@@ -29,6 +29,8 @@ JevRouter 是一个本地优先的 Agent 能力路由器，将模型、Subagent�
 
 ## Quick start
 
+Public user-facing documentation lives in [`docs/agent-integration.md`](docs/agent-integration.md) and [`docs/architecture.md`](docs/architecture.md). Internal product drafts and research notes are kept outside the public repository.
+
 ```bash
 npm install
 npm run typecheck
@@ -79,7 +81,7 @@ const decision = await route({ request: "查找登录失败 issue", candidates: 
 The CLI is the equivalent one-line shell interface:
 
 ```bash
-JEV_API_KEY=... npx jevrouter route --request "查找登录失败 issue"
+JEV_API_KEY=... npx --yes github:BillionsBobby/JevRouter route --request "查找登录失败 issue"
 ```
 
 For Codex, Claude, or another MCP-native Agent, run the optional stdio adapter:
