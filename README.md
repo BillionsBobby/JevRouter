@@ -115,6 +115,8 @@ npx --yes github:BillionsBobby/JevRouter agent setup --agent all
 
 This creates or updates project-level `.codex/config.toml`, `.codex/jevrouter-instructions.md`, `.mcp.json`, and `CLAUDE.md` additively. Codex receives all supported key names through `env_vars` and loads the routing instructions with `model_instructions_file`; Claude Code uses environment expansion plus `CLAUDE.md`. Restart the Agent after setup. The instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
 
+The same setup also installs a project Skill at `.agents/skills/jevrouter-routing/SKILL.md` for Codex and `.claude/skills/jevrouter-routing/SKILL.md` for Claude Code. The Skill describes the MCP-first flow and a CLI fallback using `--candidates-file`.
+
 For only one host:
 
 ```bash
@@ -138,6 +140,16 @@ npx --yes github:BillionsBobby/JevRouter agent doctor --agent all
 ```
 
 Setup injects only the selected provider's environment variable into the Agent configuration. This avoids Claude Code rejecting unset `${VAR}` references while parsing `.mcp.json`.
+
+CLI fallback with a native candidate file:
+
+```bash
+OPENROUTER_API_KEY="your key" \
+npx --yes github:BillionsBobby/JevRouter route \
+  --provider openrouter \
+  --request "route this task to the best capability" \
+  --candidates-file ./jevrouter-candidates.json
+```
 
 ## Manifest contract
 

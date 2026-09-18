@@ -8,7 +8,7 @@ import { CachedJevProvider } from "../src/provider.js";
 import { createSdkProvider, route as sdkRoute } from "../src/api.js";
 import { handleMessage } from "../src/mcp-server.js";
 import { CapabilityRegistry, defaultPolicy, loadPolicyFile } from "../src/manifest.js";
-import { doctorAgents, renderClaudeServer, renderCodexConfigBlock, renderRoutingInstructions } from "../src/agent-setup.js";
+import { doctorAgents, renderClaudeServer, renderCodexConfigBlock, renderJevRouterSkill, renderRoutingInstructions } from "../src/agent-setup.js";
 import { resolve } from "node:path";
 
 const candidates: CapabilityManifest[] = [
@@ -258,6 +258,14 @@ test("agent doctor is read-only and reports missing setup", async () => {
   assert.equal(results.length, 2);
   assert.equal(results.every((result) => result.configured === false), true);
   assert.ok(results.every((result) => result.issues.length > 0));
+});
+
+test("skill instructions provide MCP and CLI fallback with explicit statuses", () => {
+  const skill = renderJevRouterSkill();
+  assert.match(skill, /name: jevrouter-routing/);
+  assert.match(skill, /jev_route/);
+  assert.match(skill, /--candidates-file/);
+  assert.match(skill, /no_decision/);
 });
 
 test("missing policy file falls back to the default policy for fresh Agent setup", async () => {

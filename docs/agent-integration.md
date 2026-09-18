@@ -17,6 +17,7 @@ The command creates project-level configuration for Codex and Claude Code:
 - `.codex/jevrouter-instructions.md` is loaded through `model_instructions_file` and tells Codex to route meaningful capability choices first.
 - `.mcp.json` expands only the selected provider key at runtime.
 - `CLAUDE.md` gives Claude Code the same routing rule.
+- `.agents/skills/jevrouter-routing/SKILL.md` and `.claude/skills/jevrouter-routing/SKILL.md` provide the reusable Skill procedure, including the CLI fallback.
 
 The key is never written into either file. Restart the Agent after setup.
 
@@ -31,6 +32,16 @@ Both agents should report `configured: true` and an empty `issues` array.
 After JevRouter is published to npm, set `JEVROUTER_PACKAGE=jevrouter` before running setup to use the package name.
 
 When using OpenRouter, setup detects `OPENROUTER_API_KEY` automatically. You can make the provider explicit with `--provider openrouter` or `--provider typesafe`. Only the selected provider environment variable is injected, so Claude Code does not see unresolved `${VAR}` references.
+
+The CLI fallback accepts the Agent's real candidates without requiring a registry:
+
+```bash
+OPENROUTER_API_KEY="your key" \
+npx --yes github:BillionsBobby/JevRouter route \
+  --provider openrouter \
+  --request "choose a research capability" \
+  --candidates-file ./jevrouter-candidates.json
+```
 
 ## Runtime flow
 

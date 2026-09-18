@@ -11,6 +11,7 @@ import { saveDecision, savePlan } from "./store.js";
 import type { CapabilityManifest, RouteInput } from "./types.js";
 import { startMcpServer } from "./mcp-server.js";
 import { doctorAgents, setupAgents } from "./agent-setup.js";
+import { parse } from "yaml";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -80,7 +81,7 @@ async function route(args: string[]): Promise<void> {
   if (!request) throw new Error("usage: jevrouter route --request \"...\" [--provider demo|typesafe]");
   const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
   const provider = createProvider(option(args, "--provider"));
-  const candidates = await registry.list();
+  const candidates = await loadCandidates(option(args, "--candidates-file"));
   const actorPermissions = option(args, "--actor-permissions")?.split(",").map((value) => value.trim()).filter(Boolean);
   const actor = option(args, "--actor");
   const inputText = option(args, "--input");
@@ -88,6 +89,18 @@ async function route(args: string[]): Promise<void> {
   const result = await new JevRouter(provider, policy).route({ request, actor, actor_permissions: actorPermissions, input }, candidates);
   const outputPath = await saveDecision(result);
   console.log(JSON.stringify({ ...result, saved_to: outputPath }, null, 2));
+}
+
+async function loadCandidates(filePath?: string): Promise<CapabilityManifest[]> {
+  if (!filePath) return await registry.list();
+  const parsed = parse(await readFile(filePath, "utf8")) as unknown;
+  const values = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray((parsed as { candidates?: unknown }).candidates)
+      ? (parsed as { candidates: unknown[] }).candidates
+      : null;
+  if (!values) throw new Error(`candidates file must be an array or { candidates: [...] }: ${filePath}`);
+  return values.map((candidate, index) => normalizeCapability(candidate, `${filePath}[${index}]`));
 }
 
 async function plan(args: string[]): Promise<void> {
@@ -212,7 +225,7 @@ Commands:
   capability list
   discover [--skills <dir>] [--mcp <mcp.json>] [--cli git,docker] [--dsh <dir-or-file>]
   decision show <decision-id>
-  route --request "..." [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter]
+  route --request "..." [--candidates-file ./candidates.json] [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter]
   plan --request "..." [--steps 5] [--mode batch|serial] [--provider demo|typesafe|openrouter]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents

@@ -10,3 +10,6 @@ dist/
 .DS_Store
 .codex/
 .mcp.json
+.agents/skills/jevrouter-routing/
+.claude/skills/jevrouter-routing/
+CLAUDE.md

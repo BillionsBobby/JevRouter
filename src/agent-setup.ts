@@ -20,6 +20,32 @@ export interface AgentDoctorResult {
   issues: string[];
 }
 
+export function renderJevRouterSkill(): string {
+  return `---
+name: jevrouter-routing
+description: Route meaningful model, Tool, Skill, CLI, Subagent, and DSH choices through JevRouter before execution.
+---
+
+# JevRouter routing skill
+
+Use this skill whenever the task requires choosing between two or more models, tools, skills, CLIs, Subagents, or DSH capabilities.
+
+## Procedure
+
+1. Collect the user's current request and the real candidate descriptors available in this Agent turn.
+2. Call the \`jev_route\` MCP tool when it is available. Pass native function-tool descriptors directly.
+3. If MCP is unavailable, call the local CLI with the same request and a candidates file:
+
+   \`OPENROUTER_API_KEY=... npx --yes github:BillionsBobby/JevRouter route --provider openrouter --request "..." --candidates-file ./jevrouter-candidates.json\`
+
+4. Follow the result status. Execute only \`selected\` when status is \`selected\` or after the required confirmation.
+5. Stop for \`needs_confirmation\` or \`no_decision\`. Explain the fallback or ask for clarification.
+6. Re-route when a new major step changes the available capabilities or task intent.
+
+Jev probabilities describe uncertainty. They do not grant permission. Never bypass a filtered capability or invent a missing candidate.
+`;
+}
+
 const serverPackage = process.env.JEVROUTER_PACKAGE ?? "github:BillionsBobby/JevRouter";
 const serverArgs = ["-y", serverPackage, "serve-mcp"];
 const keyNames = ["JEV_API_KEY", "TYPESAFE_API_KEY", "OPENROUTER_API_KEY"] as const;
@@ -39,6 +65,7 @@ export async function setupAgents(target: AgentTarget, root = process.cwd(), pro
   const results: AgentSetupResult[] = [];
   for (const agent of targets) {
     results.push(agent === "codex" ? await setupCodex(root, keyName) : await setupClaude(root, keyName));
+    await setupSkill(agent, root);
   }
   return results;
 }
@@ -68,11 +95,13 @@ export async function doctorAgents(target: AgentTarget, root = process.cwd(), pr
   return Promise.all(targets.map(async (agent) => {
     const mcpFile = join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json");
     const instructionFile = join(root, agent === "codex" ? ".codex/jevrouter-instructions.md" : "CLAUDE.md");
+    const skillFile = join(root, agent === "codex" ? ".agents/skills/jevrouter-routing/SKILL.md" : ".claude/skills/jevrouter-routing/SKILL.md");
     const issues: string[] = [];
     const [mcp, instructions] = await Promise.all([readIfExists(mcpFile), readIfExists(instructionFile)]);
     if (!mcp) issues.push(`missing ${mcpFile}`);
     if (!mcp?.includes("jevrouter")) issues.push(`MCP entry jevrouter not found in ${mcpFile}`);
     if (!instructions?.includes(instructionMarker)) issues.push(`routing instructions not found in ${instructionFile}`);
+    if (!(await readIfExists(skillFile))) issues.push(`skill not found at ${skillFile}`);
     if (!keyAvailable) issues.push(`no ${providerKey} in the current environment`);
     if (mcp && !mcp.includes(providerKey)) issues.push(`${providerKey} is not forwarded by ${mcpFile}`);
     return { agent, configured: issues.length === 0, instruction_file: instructionFile, mcp_file: mcpFile, key_available: keyAvailable, provider_key: providerKey, issues };
@@ -123,6 +152,12 @@ async function setupCodex(root: string, keyName: typeof keyNames[number]): Promi
     await writeFile(path, `# JevRouter project MCP configuration\n${block}`, { flag: "wx" });
     return { agent: "codex", path, status: "created" };
   }
+}
+
+async function setupSkill(agent: "codex" | "claude", root: string): Promise<void> {
+  const directory = join(root, agent === "codex" ? ".agents/skills/jevrouter-routing" : ".claude/skills/jevrouter-routing");
+  await mkdir(directory, { recursive: true });
+  await writeIfMissing(join(directory, "SKILL.md"), renderJevRouterSkill());
 }
 
 async function ensureInstructions(path: string): Promise<void> {
