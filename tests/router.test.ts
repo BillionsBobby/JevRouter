@@ -210,11 +210,12 @@ test("renders key-safe Codex and Claude Agent setup", () => {
   const claude = renderClaudeServer();
   assert.deepEqual(claude, {
     command: "npx",
-    args: ["-y", "jevrouter", "serve-mcp"],
+    args: ["-y", "github:BillionsBobby/JevRouter", "serve-mcp"],
     env: { JEV_API_KEY: "${JEV_API_KEY}" },
   });
   const codex = renderCodexConfigBlock();
   assert.match(codex, /\[mcp_servers\.jevrouter\]/);
   assert.match(codex, /env_vars = \["JEV_API_KEY"\]/);
+  assert.match(codex, /github:BillionsBobby\/JevRouter/);
   assert.doesNotMatch(codex, /sk-|JEV_API_KEY =/);
 });

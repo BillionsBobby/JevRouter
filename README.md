@@ -104,7 +104,7 @@ For a trusted project, generate the Codex and/or Claude Code MCP entry without w
 
 ```bash
 export JEV_API_KEY="your Jev key"
-npx jevrouter agent setup --agent all
+npx --yes github:BillionsBobby/JevRouter agent setup --agent all
 ```
 
 This creates or updates project-level `.codex/config.toml` and `.mcp.json` additively. Codex receives `JEV_API_KEY` through `env_vars`; Claude Code uses `${JEV_API_KEY}` expansion. Restart the Agent after setup. The MCP server instructions tell the Agent to call `jev_route` before choosing a meaningful model, Tool, or Subagent; the Agent still performs the selected execution.
@@ -112,9 +112,11 @@ This creates or updates project-level `.codex/config.toml` and `.mcp.json` addit
 For only one host:
 
 ```bash
-npx jevrouter agent setup --agent codex
-npx jevrouter agent setup --agent claude
+npx --yes github:BillionsBobby/JevRouter agent setup --agent codex
+npx --yes github:BillionsBobby/JevRouter agent setup --agent claude
 ```
+
+The generated MCP command uses the public GitHub package source so this works before an npm release. After `jevrouter` is published, set `JEVROUTER_PACKAGE=jevrouter` before setup to use the npm package instead.
 
 ## Manifest contract
 

@@ -9,7 +9,8 @@ export interface AgentSetupResult {
   status: "created" | "updated" | "existing";
 }
 
-const serverArgs = ["-y", "jevrouter", "serve-mcp"];
+const serverPackage = process.env.JEVROUTER_PACKAGE ?? "github:BillionsBobby/JevRouter";
+const serverArgs = ["-y", serverPackage, "serve-mcp"];
 
 export async function setupAgents(target: AgentTarget, root = process.cwd()): Promise<AgentSetupResult[]> {
   const targets = target === "all" ? (["codex", "claude"] as const) : ([target] as const);
@@ -29,7 +30,7 @@ export function renderClaudeServer(): Record<string, unknown> {
 }
 
 export function renderCodexConfigBlock(): string {
-  return `[mcp_servers.jevrouter]\ncommand = "npx"\nargs = ["-y", "jevrouter", "serve-mcp"]\nenv_vars = ["JEV_API_KEY"]\n`;
+  return `[mcp_servers.jevrouter]\ncommand = "npx"\nargs = ["-y", "${serverPackage}", "serve-mcp"]\nenv_vars = ["JEV_API_KEY"]\n`;
 }
 
 async function setupClaude(root: string): Promise<AgentSetupResult> {
