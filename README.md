@@ -54,7 +54,7 @@ Node.js 20+ required. JevRouter accepts either the official Jev API or an OpenRo
 npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-Choose `typesafe` for the official Jev API or `openrouter` at the prompt, then paste the corresponding key. The key stays in the current process environment and is never written to project files. For Claude Code use `--agent claude`. To install without launching a host, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` first and use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
+Choose `typesafe` for the official Jev API or `openrouter` at the prompt, then paste the corresponding key. The key stays in the current process environment and is never written to project files. For Claude Code use `--agent claude`, and for Cursor use `--agent cursor`. To install without launching a host, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` first and use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
 
 ```bash
 npx --yes github:BillionsBobby/JevRouter agent setup          # Skill + project instructions only

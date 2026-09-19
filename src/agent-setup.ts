@@ -1,23 +1,51 @@
 import { appendFile, mkdir, readFile, writeFile, lstat, copyFile } from "node:fs/promises";
-import { constants, readFileSync } from "node:fs";
+import { constants, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { providerConfiguration } from "./runtime.js";
 import type { KeyName } from "./runtime.js";
 
-export type AgentTarget = "codex" | "claude" | "all";
+export type AgentTarget = "codex" | "claude" | "cursor" | "all";
 export type AgentProvider = "typesafe" | "openrouter";
+
+export const AGENT_HOST_COMMANDS: Record<"codex" | "claude" | "cursor", readonly string[]> = {
+  codex: ["codex"],
+  claude: ["claude"],
+  cursor: ["agent", "cursor-agent"],
+};
+
+export function resolveHostCommand(target: "codex" | "claude" | "cursor", env: NodeJS.ProcessEnv = process.env): string {
+  const commands = AGENT_HOST_COMMANDS[target];
+  const pathVar = env.PATH ?? "";
+  const separator = process.platform === "win32" ? ";" : ":";
+  const extensions = process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  const dirs = pathVar.split(separator).filter(Boolean);
+
+  for (const dir of dirs) {
+    for (const command of commands) {
+      for (const ext of extensions) {
+        try {
+          const stat = statSync(join(dir, command + ext));
+          if (stat.isFile()) return command;
+        } catch {
+          // not found in this dir, continue
+        }
+      }
+    }
+  }
+  return commands[0];
+}
 export interface AgentSetupOptions { withMcp?: boolean }
 export interface AgentSetupResult {
-  agent: "codex" | "claude";
+  agent: "codex" | "claude" | "cursor";
   path: string;
   status: "created" | "updated" | "existing";
   skill_file: string;
   provider_key: string;
 }
 export interface AgentDoctorResult {
-  agent: "codex" | "claude";
+  agent: "codex" | "claude" | "cursor";
   configured: boolean;
   instruction_file: string;
   skill_file: string;
@@ -37,7 +65,11 @@ interface Integration {
 const marker = "<!-- jevrouter:skill-cli-v2 -->";
 const cliPath = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 const integrationPath = (root: string) => join(root, ".jevrouter/integration-v2.json");
-const skillDirectory = (agent: "codex" | "claude", root: string) => join(root, agent === "codex" ? ".agents/skills/jevrouter" : ".claude/skills/jevrouter");
+const skillDirectory = (agent: "codex" | "claude" | "cursor", root: string) => {
+  if (agent === "codex") return join(root, ".agents/skills/jevrouter");
+  if (agent === "cursor") return join(root, ".cursor/skills/jevrouter");
+  return join(root, ".claude/skills/jevrouter");
+};
 const shellQuote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 
 export function renderJevRouterSkill(command = "node bin/jevrouter.mjs"): string {
@@ -121,7 +153,7 @@ export async function doctorAgents(target: AgentTarget = "all", root = process.c
     if (!(await readOptional(skill))?.includes("name: jevrouter")) issues.push(`Missing Skill: ${skill}`);
     if (!(await readOptional(helper))?.includes(integration?.cli ?? cliPath)) issues.push(`Missing or stale CLI helper: ${helper}`);
     try { if (integration) await lstat(integration.cli); } catch { issues.push("Installed CLI is no longer present; reinstall JevRouter"); }
-    const mcpFile = integration?.with_mcp ? join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json") : null;
+    const mcpFile = integration?.with_mcp ? mcpPath(agent, root) : null;
     if (mcpFile) {
       const config = await readOptional(mcpFile);
       if (!config?.includes(integration!.cli) || !config.includes(key)) issues.push(`Missing or stale optional MCP configuration: ${mcpFile}`);
@@ -130,19 +162,26 @@ export async function doctorAgents(target: AgentTarget = "all", root = process.c
   }));
 }
 
-async function setupMcp(agent: "codex" | "claude", root: string, provider: AgentProvider): Promise<void> {
+function mcpPath(agent: "codex" | "claude" | "cursor", root: string): string {
+  if (agent === "codex") return join(root, ".codex/config.toml");
+  if (agent === "cursor") return join(root, ".cursor/mcp.json");
+  return join(root, ".mcp.json");
+}
+
+async function setupMcp(agent: "codex" | "claude" | "cursor", root: string, provider: AgentProvider): Promise<void> {
   // An existing config may be owned by the user. Write a proposal rather than replacing it.
-  const path = join(root, agent === "codex" ? ".codex/config.toml" : ".mcp.json");
+  const path = mcpPath(agent, root);
   const desired = agent === "codex" ? renderCodexConfigBlock(provider) : JSON.stringify({ mcpServers: { jevrouter: renderClaudeServer(provider) } }, null, 2) + "\n";
   await writeNewOrSame(path, desired);
 }
-async function instructionPath(agent: "codex" | "claude", root: string): Promise<string> {
+async function instructionPath(agent: "codex" | "claude" | "cursor", root: string): Promise<string> {
   if (agent === "claude") return join(root, "CLAUDE.md");
+  if (agent === "cursor") return join(root, ".cursorrules");
   return (await readOptional(join(root, "AGENTS.override.md")))?.trim() ? join(root, "AGENTS.override.md") : join(root, "AGENTS.md");
 }
-function targetAgents(target: AgentTarget): Array<"codex" | "claude"> {
-  if (!["codex", "claude", "all"].includes(target)) throw new Error("agent must be codex, claude, or all");
-  return target === "all" ? ["codex", "claude"] : [target];
+function targetAgents(target: AgentTarget): Array<"codex" | "claude" | "cursor"> {
+  if (!["codex", "claude", "cursor", "all"].includes(target)) throw new Error("agent must be codex, claude, cursor, or all");
+  return target === "all" ? ["codex", "claude", "cursor"] : [target];
 }
 async function readOptional(path: string): Promise<string | null> {
   try {

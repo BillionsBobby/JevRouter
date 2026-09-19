@@ -257,7 +257,7 @@ test("explicit OpenRouter provider uses the OpenRouter key when multiple keys ex
 
 test("agent doctor is read-only and reports missing setup", async () => {
   const results = await doctorAgents("all", "/tmp/jevrouter-agent-doctor-missing", "openrouter");
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 3);
   assert.equal(results.every((result) => result.configured === false), true);
   assert.ok(results.every((result) => result.issues.length > 0));
 });
