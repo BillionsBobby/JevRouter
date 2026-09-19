@@ -31,6 +31,8 @@ The key contract is simple: **Jev owns the decision probabilities; JevRouter own
 - **Receipts by default** — append-only decision/plan files with provenance hashes; what was decided, why, and at what confidence is always auditable.
 - **Capability trust is explicit** — discovered and caller-supplied candidates carry verification status; strict projects can set `require_verified_candidates` to prevent unverified descriptions from being selected.
 
+![JevRouter Architecture](docs/assets/jevrouter-architecture.png)
+
 ## Benchmark
 
 First-5 tool-call prediction on 10 Toolathlon tasks (real tool inventories from 9 live MCP servers, Jev `typesafe/jev-1.13-20260917` vs DeepSeek V4.1 Flash):
