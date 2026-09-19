@@ -12,10 +12,10 @@
 From the project root:
 
 ```bash
-export OPENROUTER_API_KEY="your-key" && npx --yes github:BillionsBobby/JevRouter agent start --agent claude --provider openrouter
+npx --yes github:BillionsBobby/JevRouter agent start --agent claude
 ```
 
-or, without launching Claude Code:
+The command asks for the official Jev API or OpenRouter key without echoing or storing it. Or, without launching Claude Code:
 
 ```bash
 export OPENROUTER_API_KEY="your-key"; npx --yes github:BillionsBobby/JevRouter agent setup --agent claude

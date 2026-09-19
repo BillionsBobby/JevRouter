@@ -242,10 +242,10 @@
         <h1><span class="brand">JevRouter</span> Make every agent decision <em>faster.</em></h1>
         <div class="install" aria-label="Install and use JevRouter">
           <div class="install-head"><div class="agent-picker" role="tablist" aria-label="Choose your agent"><button class="agent-choice" type="button" role="tab" aria-selected="true" data-agent="codex">Codex</button><button class="agent-choice" type="button" role="tab" aria-selected="false" data-agent="claude">Claude Code</button></div><button class="copy" type="button" data-copy aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>
-          <pre><code data-code><span class="prompt">export OPENROUTER_API_KEY="your_key" &amp;&amp;</span>
-<span class="string">npx --yes github:BillionsBobby/JevRouter agent start</span> <span class="string">--agent codex --provider openrouter</span></code></pre>
+          <pre><code data-code><span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>
+<span class="string">--agent codex</span></code></pre>
         </div>
-        <p class="agent-note" data-agent-note>Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.</p>
+        <p class="agent-note" data-agent-note>Run one command, choose the official Jev API or OpenRouter at the prompt, and keep routing inside your Agent.</p>
       </div>
     </section>
     <section class="routing">
@@ -352,16 +352,16 @@
     const button = document.querySelector('[data-copy]');
     const toast = document.querySelector('.toast');
     const codeByAgent = {
-      codex: 'export OPENROUTER_API_KEY="your_key" && npx --yes github:BillionsBobby/JevRouter agent start --agent codex --provider openrouter',
-      claude: 'export OPENROUTER_API_KEY="your_key" && npx --yes github:BillionsBobby/JevRouter agent start --agent claude --provider openrouter'
+      codex: 'npx --yes github:BillionsBobby/JevRouter agent start --agent codex',
+      claude: 'npx --yes github:BillionsBobby/JevRouter agent start --agent claude'
     };
     const displayByAgent = {
-      codex: '<span class="prompt">export OPENROUTER_API_KEY="your_key" &amp;&amp;</span>\n<span class="string">npx --yes github:BillionsBobby/JevRouter agent start</span> <span class="string">--agent codex --provider openrouter</span>',
-      claude: '<span class="prompt">export OPENROUTER_API_KEY="your_key" &amp;&amp;</span>\n<span class="string">npx --yes github:BillionsBobby/JevRouter agent start</span> <span class="string">--agent claude --provider openrouter</span>'
+      codex: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent codex</span>',
+      claude: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent claude</span>'
     };
     const noteByAgent = {
-      codex: 'Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.',
-      claude: 'Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.'
+      codex: 'The command asks for the official Jev API or OpenRouter key without writing it to disk, then launches a persistent Codex session.',
+      claude: 'The command asks for the official Jev API or OpenRouter key without writing it to disk, then launches a persistent Claude Code session.'
     };
     const codeBlock = document.querySelector('[data-code]');
     const agentNote = document.querySelector('[data-agent-note]');

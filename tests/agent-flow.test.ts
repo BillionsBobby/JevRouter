@@ -88,6 +88,13 @@ test('no key, empty candidates, malformed input and rejected credentials fail vi
   await assert.rejects(stat(join(cwd, 'AGENTS.md')), { code: 'ENOENT' });
 });
 
+test('agent start explains secure interactive key entry when no terminal credentials exist', async () => {
+  const cwd = await project();
+  const result = run(cwd, ['agent', 'start', '--agent', 'codex'], undefined, environment());
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /enter a key securely/);
+});
+
 test('provider configuration respects Jev aliases and does not borrow another provider key', () => {
   assert.deepEqual(providerConfiguration('typesafe', { JEV_API_KEY: 'a' }), { provider: 'typesafe', key: 'JEV_API_KEY' });
   assert.deepEqual(providerConfiguration(undefined, { OPENROUTER_API_KEY: 'b' }), { provider: 'openrouter', key: 'OPENROUTER_API_KEY' });

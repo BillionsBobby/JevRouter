@@ -85,6 +85,21 @@ test("filters capabilities outside the caller permission set", async () => {
   assert.match(result.decision.candidates.find((candidate) => candidate.id === "blocked.write")?.router.filter_reason ?? "", /actor_missing_permissions/);
 });
 
+test("keeps candidate provenance visible and can require verified capabilities", async () => {
+  const provider = new FixedProvider({
+    answers: { tool: { type: "choice", choice: "ad_hoc", probabilities: { ad_hoc: 1 }, confidence: 1 } },
+  });
+  const result = await new JevRouter(provider, { min_confidence: 0, require_verified_candidates: true }).route(
+    { request: "read" },
+    [{ name: "ad_hoc", description: "A caller supplied description" } as CapabilityManifest],
+  );
+  const candidate = result.decision.candidates[0];
+  assert.equal(candidate?.router.verified, false);
+  assert.equal(candidate?.router.verification_status, "unknown");
+  assert.match(candidate?.router.filter_reason ?? "", /capability_not_verified/);
+  assert.equal(result.status, "no_decision");
+});
+
 test("validates supplied tool input against the selected manifest schema", async () => {
   const provider = new FixedProvider({
     answers: { tool: { type: "choice", choice: "safe.read", probabilities: { "safe.read": 1 }, confidence: 1 } },

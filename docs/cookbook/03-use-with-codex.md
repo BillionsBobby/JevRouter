@@ -5,17 +5,17 @@
 ## Prerequisites
 
 - Codex CLI installed and logged in (its own credentials are separate from the Jev decision key)
-- `OPENROUTER_API_KEY` or `JEV_API_KEY` exported
+- `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` exported, or an interactive terminal for secure entry
 
 ## Install into a project (recommended: persistent entrypoint)
 
 From the project root:
 
 ```bash
-export OPENROUTER_API_KEY="your-key" && npx --yes github:BillionsBobby/JevRouter agent start --agent codex --provider openrouter
+npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-This checks Jev connectivity (one small paid call), installs the Skill + project instructions, then launches Codex attached to this session. The command stays attached until Codex exits; the Skill and instructions remain in the project for later sessions.
+This asks for the official Jev API or OpenRouter key when one is not already exported, without echoing or storing it. It checks Jev connectivity (one small paid call), installs the Skill + project instructions, then launches Codex attached to this session. The command stays attached until Codex exits; the Skill and instructions remain in the project for later sessions.
 
 Install without launching (e.g. desktop users, CI):
 

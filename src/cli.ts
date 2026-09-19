@@ -14,6 +14,7 @@ import { startMcpServer } from "./mcp-server.js";
 import { doctorAgents, setupAgents } from "./agent-setup.js";
 import { parse } from "yaml";
 import { probeJev, runPlanRequest, runRouteRequest } from "./route-command.js";
+import { ensureAgentCredentials } from "./credentials.js";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -205,8 +206,9 @@ async function agent(args: string[]): Promise<void> {
     if (results.some(r => !r.configured)) process.exitCode = 1;
     return;
   }
-  const check = args.includes("--skip-check") ? null : await probeJev(provider, m => console.error(m));
-  const results = await setupAgents(target, root, provider, { withMcp: args.includes("--with-mcp") });
+  const resolvedProvider = args.includes("--skip-check") ? provider : await ensureAgentCredentials(provider);
+  const check = args.includes("--skip-check") ? null : await probeJev(resolvedProvider, m => console.error(m));
+  const results = await setupAgents(target, root, resolvedProvider, { withMcp: args.includes("--with-mcp") });
   console.log(JSON.stringify({ status: "installed", check, files: results }, null, 2));
   console.error("JevRouter READY. Use $jevrouter in Codex or /jevrouter in Claude Code. Keep the key exported in the Agent environment. Setup does not route later tasks by itself.");
   if (action === "start") {

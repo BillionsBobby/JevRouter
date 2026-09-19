@@ -1,4 +1,5 @@
 export type CapabilityType = "skill" | "mcp_tool" | "cli" | "dsh" | "model" | "subagent";
+export type CapabilityVerification = "verified" | "discovered" | "unverified" | "unknown";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 export type DecisionStatus = "selected" | "needs_confirmation" | "no_decision";
 
@@ -16,6 +17,12 @@ export interface CapabilityManifest {
   type: CapabilityType;
   version?: string;
   description: string;
+  /** Evidence that this descriptor maps to a real host capability. */
+  verification?: {
+    status: CapabilityVerification;
+    source?: string;
+    checked_at?: string;
+  };
   input_schema?: JsonSchema;
   output_schema?: JsonSchema;
   permissions?: string[];
@@ -145,6 +152,8 @@ export interface RouterPolicy {
   required_permissions?: string[];
   confirmation_risk_levels?: RiskLevel[];
   allow_unavailable_fallback?: boolean;
+  /** Keep ad-hoc descriptions visible, but prevent them from being selected as verified capabilities. */
+  require_verified_candidates?: boolean;
 }
 
 export interface RouterCandidate {
@@ -157,6 +166,9 @@ export interface RouterCandidate {
   router_rank: number | null;
   router: {
     available: boolean;
+    verified: boolean;
+    verification_status: CapabilityVerification;
+    verification_source: string | null;
     allowed: boolean;
     risk_level: RiskLevel;
     requires_confirmation: boolean;

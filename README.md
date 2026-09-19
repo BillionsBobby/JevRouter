@@ -29,6 +29,7 @@ The key contract is simple: **Jev owns the decision probabilities; JevRouter own
 - **One call or a plan** — `route` answers one question; `plan` answers "which capability handles step 1..N" with serial, batch, and decomposed strategies.
 - **Every surface** — models, subagents, Skills, MCP tools, CLIs, DSH plugins share one routing contract.
 - **Receipts by default** — append-only decision/plan files with provenance hashes; what was decided, why, and at what confidence is always auditable.
+- **Capability trust is explicit** — discovered and caller-supplied candidates carry verification status; strict projects can set `require_verified_candidates` to prevent unverified descriptions from being selected.
 
 ## Benchmark
 
@@ -45,15 +46,15 @@ Batch mode with beam sequence selection (`--sequence beam`) lifts position-wise 
 
 ## Quickstart
 
-Node.js 20+ required. Works with a direct Jev key (`JEV_API_KEY`) or an OpenRouter key (`OPENROUTER_API_KEY`).
+Node.js 20+ required. JevRouter accepts either the official Jev API or an OpenRouter key. The key is entered interactively when no matching environment variable is already exported.
 
 **Give your agent the router** (installs the Skill + project instructions, checks Jev, launches the host):
 
 ```bash
-export OPENROUTER_API_KEY="your-key" && npx --yes github:BillionsBobby/JevRouter agent start --agent codex --provider openrouter
+npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-For Claude Code use `--agent claude`. To install without launching a host, use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
+Choose `typesafe` for the official Jev API or `openrouter` at the prompt, then paste the corresponding key. The key stays in the current process environment and is never written to project files. For Claude Code use `--agent claude`. To install without launching a host, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` first and use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
 
 ```bash
 npx --yes github:BillionsBobby/JevRouter agent setup          # Skill + project instructions only
@@ -205,6 +206,7 @@ When Jev selects a filtered candidate, the router can choose the highest-probabi
 - Medium/high/critical capabilities require confirmation by default.
 - Missing permissions, unavailable capabilities and disallowed risk levels are hard filters.
 - API keys are read from environment variables and never written to manifests or decision files.
+- Candidate provenance is separate from Jev probability; an unverified description can be visible for review without being treated as a verified host capability.
 - Decision files are append-only; rerunning a route creates a new decision ID.
 - CLI routes call the provider live with cache disabled; SDK caching is opt-in (`{cache: true}`).
 
@@ -240,10 +242,10 @@ JevRouter 是一个本地优先的 Agent 能力路由器，将模型、Subagent�
 快速开始（Node.js 20+）：
 
 ```bash
-export OPENROUTER_API_KEY="your-key" && npx --yes github:BillionsBobby/JevRouter agent start --agent codex --provider openrouter
+npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-更多示例见 [Cookbook](docs/cookbook/README.md)。
+命令会安全询问使用官方 Jev API 还是 OpenRouter，并隐藏输入 Key。更多示例见 [Cookbook](docs/cookbook/README.md)。
 
 </details>
 

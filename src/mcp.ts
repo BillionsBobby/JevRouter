@@ -31,6 +31,7 @@ export async function discoverMcpConfig(filePath: string, timeoutMs = 8_000): Pr
         type: "mcp_tool",
         version: "discovered",
         description: tool.description ?? `MCP tool ${tool.name} from ${serverName}`,
+        verification: { status: "discovered", source: "mcp_discovery" },
         input_schema: tool.inputSchema,
         permissions: [`mcp:${serverName}:read`],
         risk: { level: "medium", categories: ["external_tool"] },
