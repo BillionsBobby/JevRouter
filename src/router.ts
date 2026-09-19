@@ -497,6 +497,8 @@ function candidateView(
 ): RouterCandidate {
   const riskLevel: RiskLevel = candidate.risk?.level ?? "low";
   const available = candidate.availability?.available !== false;
+  const verificationStatus = candidate.verification?.status ?? "unknown";
+  const verified = verificationStatus === "verified";
   const required = new Set(policy.required_permissions ?? []);
   const permissions = new Set(candidate.permissions ?? []);
   const missingPolicyPermissions = [...required].filter((permission) => !permissions.has(permission));
@@ -509,6 +511,7 @@ function candidateView(
   if (missingPolicyPermissions.length > 0) reasons.push(`manifest_missing_permissions:${missingPolicyPermissions.join(",")}`);
   if (missingActorPermissions.length > 0) reasons.push(`actor_missing_permissions:${missingActorPermissions.join(",")}`);
   if (!allowedRisk) reasons.push(`risk_not_allowed:${riskLevel}`);
+  if (policy.require_verified_candidates && !verified) reasons.push(`capability_not_verified:${verificationStatus}`);
   const requiresConfirmation = Boolean(
     candidate.policy?.requires_confirmation || (policy.confirmation_risk_levels ?? []).includes(riskLevel),
   );
@@ -523,6 +526,9 @@ function candidateView(
     router_rank: routerRank,
     router: {
       available,
+      verified,
+      verification_status: verificationStatus,
+      verification_source: candidate.verification?.source ?? null,
       allowed: reasons.length === 0,
       risk_level: riskLevel,
       requires_confirmation: requiresConfirmation,

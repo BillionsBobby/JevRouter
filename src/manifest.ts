@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { parse } from "yaml";
-import type { CapabilityManifest, RiskLevel, RouterPolicy } from "./types.js";
+import type { CapabilityManifest, CapabilityVerification, RiskLevel, RouterPolicy } from "./types.js";
 
 const capabilityTypes = new Set(["skill", "mcp_tool", "cli", "dsh", "model", "subagent"]);
 const riskLevels = new Set(["low", "medium", "high", "critical"]);
@@ -14,6 +14,7 @@ export const defaultPolicy: RouterPolicy = {
   required_permissions: [],
   confirmation_risk_levels: ["medium", "high", "critical"],
   allow_unavailable_fallback: false,
+  require_verified_candidates: false,
 };
 
 export function validateManifest(input: unknown, source = "manifest"): CapabilityManifest {
@@ -32,9 +33,18 @@ export function validateManifest(input: unknown, source = "manifest"): Capabilit
   if (risk?.level !== undefined && !riskLevels.has(String(risk.level))) {
     throw new Error(`${source}: risk.level is invalid`);
   }
+  const verification = value.verification as Record<string, unknown> | undefined;
+  if (verification?.status !== undefined && !["verified", "discovered", "unverified", "unknown"].includes(String(verification.status))) {
+    throw new Error(`${source}: verification.status is invalid`);
+  }
   return {
     ...(value as unknown as CapabilityManifest),
     version: value.version ? String(value.version) : "0.1.0",
+    verification: {
+      status: (verification?.status as CapabilityVerification | undefined) ?? "unknown",
+      ...(verification?.source === undefined ? {} : { source: String(verification.source) }),
+      ...(verification?.checked_at === undefined ? {} : { checked_at: String(verification.checked_at) }),
+    },
     risk: {
       level: (risk?.level as RiskLevel | undefined) ?? "low",
       categories: Array.isArray(risk?.categories) ? risk.categories.map(String) : [],
@@ -65,6 +75,7 @@ export function normalizeCapability(input: unknown, source = "candidate"): Capab
           risk: { level: "low", categories: ["agent_tool"] },
           availability: { available: true },
           execution: { mode: "mcp", target: name, dry_run: true },
+          verification: { status: "unverified", source: "agent_input" },
           metadata: { source: "agent_tool", original_type: "function" },
         }, source);
       }
@@ -81,6 +92,7 @@ export function normalizeCapability(input: unknown, source = "candidate"): Capab
         risk: { level: "low", categories: ["agent_tool"] },
         availability: { available: true },
         execution: { mode: inferredType === "model" || inferredType === "subagent" ? inferredType : "mcp", target: value.name, dry_run: true },
+        verification: { status: "unverified", source: "agent_input" },
         metadata: { source: "agent_tool" },
       }, source);
     }

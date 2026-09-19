@@ -17,6 +17,7 @@ JevRouter accepts manifests, OpenAI function tools, and simple name/description 
   "permissions": ["github.read"],        // matched against actor_permissions
   "risk": { "level": "low" },            // low | medium | high | critical
   "availability": { "available": true },
+  "verification": { "status": "verified", "source": "mcp-discovery" },
   "policy": { "requires_confirmation": false },
   "metadata": { "group": "github" }      // used by plan --group-by
 }
@@ -49,6 +50,7 @@ Discovered capabilities become manifests in `.jevrouter/capabilities/`, written 
 - `capability add <manifest.json|yaml>` → persistent registry in `.jevrouter/capabilities/`; `route`/`plan` without candidate flags read the registry.
 - `--candidates` / `--candidates-file` / stdin → per-call candidates; win over the registry when supplied.
 - Candidate IDs must be unique per call; duplicates are a hard error.
+- Agent-supplied `{name, description}` shorthand is marked `unverified`. It remains useful for an advisory route, while a strict local policy can set `require_verified_candidates: true` to force a real discovery/verification record.
 
 ## Tips
 
