@@ -246,7 +246,7 @@
       <div>
         <h1><span class="brand">JevRouter</span> Make every agent decision <em>faster.</em></h1>
         <div class="install" aria-label="Install and use JevRouter">
-          <div class="install-head"><div class="agent-picker" role="tablist" aria-label="Choose your agent"><button class="agent-choice" type="button" role="tab" aria-selected="true" data-agent="codex">Codex</button><button class="agent-choice" type="button" role="tab" aria-selected="false" data-agent="claude">Claude Code</button></div><button class="copy" type="button" data-copy aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>
+          <div class="install-head"><div class="agent-picker" role="tablist" aria-label="Choose your agent"><button class="agent-choice" type="button" role="tab" aria-selected="true" data-agent="codex">Codex</button><button class="agent-choice" type="button" role="tab" aria-selected="false" data-agent="claude">Claude Code</button><button class="agent-choice" type="button" role="tab" aria-selected="false" data-agent="other">Other Agents</button></div><button class="copy" type="button" data-copy aria-label="Copy code" title="Copy code"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>
           <pre><code data-code><span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>
 <span class="string">--agent codex</span></code></pre>
         </div>
@@ -358,11 +358,13 @@
     const toast = document.querySelector('.toast');
     const codeByAgent = {
       codex: 'npx --yes github:BillionsBobby/JevRouter agent start --agent codex',
-      claude: 'npx --yes github:BillionsBobby/JevRouter agent start --agent claude'
+      claude: 'npx --yes github:BillionsBobby/JevRouter agent start --agent claude',
+      other: 'npx --yes github:BillionsBobby/JevRouter agent setup --agent all'
     };
     const displayByAgent = {
       codex: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent codex</span>',
-      claude: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent claude</span>'
+      claude: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent claude</span>',
+      other: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent setup</span>\n<span class="string">--agent all</span>'
     };
     const noteByAgent = {
       codex: 'Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.',
