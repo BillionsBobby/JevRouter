@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { setupAgents, doctorAgents } from '../src/agent-setup.js';
+import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS } from '../src/agent-setup.js';
 import { providerConfiguration, createProvider } from '../src/runtime.js';
 
 const root = resolve('.');
@@ -197,4 +197,39 @@ test('agent setup and doctor support Cursor host with .cursorrules and .cursor/m
   assert.equal(doctor.status, 0, doctor.stderr);
   assert.equal(JSON.parse(doctor.stdout).configuration[0].configured, true);
 });
+
+test('resolveHostCommand maps agent targets to their real CLI commands', () => {
+  assert.deepEqual(AGENT_HOST_COMMANDS.codex, ['codex']);
+  assert.deepEqual(AGENT_HOST_COMMANDS.claude, ['claude']);
+  assert.deepEqual(AGENT_HOST_COMMANDS.cursor, ['agent', 'cursor-agent']);
+  assert.equal(resolveHostCommand('codex'), 'codex');
+  assert.equal(resolveHostCommand('claude'), 'claude');
+  assert.equal(resolveHostCommand('cursor', { PATH: '' }), 'agent');
+});
+
+test('regression: agent start --agent cursor executes Cursor Agent CLI (agent or legacy cursor-agent), not desktop binary', async () => {
+  const cwd = await project();
+  const bin = join(cwd, 'bin');
+  await mkdir(bin);
+
+  // Modern Cursor Agent CLI binary: 'agent'
+  await writeFile(join(bin, 'agent'), `#!${process.execPath}\nconsole.log(JSON.stringify({command:'agent',args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
+  const resultAgent = run(cwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, environment({ JEV_API_KEY: 'fixture-key', PATH: `${bin}:${process.env.PATH}` }));
+  assert.equal(resultAgent.status, 0, resultAgent.stderr);
+  assert.match(resultAgent.stderr, /CHECK passed/);
+  assert.match(resultAgent.stderr, /START host=cursor/);
+  assert.match(resultAgent.stdout, /"command":"agent"/);
+
+  // Legacy Cursor Agent CLI binary: 'cursor-agent'
+  const legacyCwd = await project();
+  const legacyBin = join(legacyCwd, 'bin');
+  await mkdir(legacyBin);
+  await writeFile(join(legacyBin, 'cursor-agent'), `#!${process.execPath}\nconsole.log(JSON.stringify({command:'cursor-agent',args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
+  const resultLegacy = run(legacyCwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, environment({ JEV_API_KEY: 'fixture-key', PATH: `${legacyBin}:${process.env.PATH}` }));
+  assert.equal(resultLegacy.status, 0, resultLegacy.stderr);
+  assert.match(resultLegacy.stderr, /CHECK passed/);
+  assert.match(resultLegacy.stderr, /START host=cursor/);
+  assert.match(resultLegacy.stdout, /"command":"cursor-agent"/);
+});
+
 

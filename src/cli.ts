@@ -11,7 +11,7 @@ import { createProvider } from "./runtime.js";
 import { saveDecision } from "./store.js";
 import type { CapabilityManifest, RouteInput } from "./types.js";
 import { startMcpServer } from "./mcp-server.js";
-import { doctorAgents, setupAgents } from "./agent-setup.js";
+import { doctorAgents, resolveHostCommand, setupAgents } from "./agent-setup.js";
 import { parse } from "yaml";
 import { probeJev, runPlanRequest, runRouteRequest } from "./route-command.js";
 import { ensureAgentCredentials } from "./credentials.js";
@@ -212,11 +212,13 @@ async function agent(args: string[]): Promise<void> {
   console.log(JSON.stringify({ status: "installed", check, files: results }, null, 2));
   console.error("JevRouter READY. Use $jevrouter in Codex, /jevrouter in Claude Code, or @jevrouter in Cursor. Keep the key exported in the Agent environment. Setup does not route later tasks by itself.");
   if (action === "start") {
+    if (target === "all") throw new Error("agent start requires --agent codex, --agent claude, or --agent cursor");
     const prompt = option(args, "--request");
     const hostArgs = prompt ? ["--", prompt] : [];
+    const command = resolveHostCommand(target);
     console.error(`JevRouter START host=${target} (key inherited; no key stored)`);
     process.exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn(target, hostArgs, { cwd: root, env: process.env, stdio: "inherit", shell: false });
+      const child = spawn(command, hostArgs, { cwd: root, env: process.env, stdio: "inherit", shell: false });
       child.once("error", () => reject(new Error(`${target} is not installed or could not start. Skill installed; launch the host after installing it.`)));
       child.once("exit", code => resolve(code ?? 1));
     });

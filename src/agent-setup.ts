@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile, lstat, copyFile } from "node:fs/promises";
-import { constants, readFileSync } from "node:fs";
+import { constants, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,34 @@ import type { KeyName } from "./runtime.js";
 
 export type AgentTarget = "codex" | "claude" | "cursor" | "all";
 export type AgentProvider = "typesafe" | "openrouter";
+
+export const AGENT_HOST_COMMANDS: Record<"codex" | "claude" | "cursor", readonly string[]> = {
+  codex: ["codex"],
+  claude: ["claude"],
+  cursor: ["agent", "cursor-agent"],
+};
+
+export function resolveHostCommand(target: "codex" | "claude" | "cursor", env: NodeJS.ProcessEnv = process.env): string {
+  const commands = AGENT_HOST_COMMANDS[target];
+  const pathVar = env.PATH ?? "";
+  const separator = process.platform === "win32" ? ";" : ":";
+  const extensions = process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  const dirs = pathVar.split(separator).filter(Boolean);
+
+  for (const dir of dirs) {
+    for (const command of commands) {
+      for (const ext of extensions) {
+        try {
+          const stat = statSync(join(dir, command + ext));
+          if (stat.isFile()) return command;
+        } catch {
+          // not found in this dir, continue
+        }
+      }
+    }
+  }
+  return commands[0];
+}
 export interface AgentSetupOptions { withMcp?: boolean }
 export interface AgentSetupResult {
   agent: "codex" | "claude" | "cursor";
