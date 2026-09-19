@@ -135,6 +135,29 @@ Strategy knobs: `sequence: "beam"` + `diversity_penalty` (joint sequence search 
 
 `route --stdin` accepts a JSON `{request, context?, candidates, input?, actor_permissions?}` object; `--candidates`/`--candidates-file` take JSON/YAML arrays or `{candidates: [...]}`. The same inputs work for `plan`.
 
+### Beyond Choice: Score, Noul, structured state
+
+`evaluate()` answers a mixed batch of all three Jev primitives against one structured state in a single provider call:
+
+```ts
+import { evaluate, getChoiceAnswer, getScoreAnswer, getNoulAnswer } from "jevrouter";
+
+const raw = await evaluate({
+  state: { ticket: "Checkout page shows a blank screen after I click Pay.", customer_tier: "enterprise" },
+  questions: {
+    team: { type: "choice", instructions: "Which team owns this?", criteria: { payments: "Billing or checkout issues", frontend: "Rendering issues" } },
+    urgency: { type: "score", instructions: "How urgent?", criteria: ["next release", "this week", "blocking revenue"] },
+    is_bug: { type: "noul", instructions: "Is this a software defect?", criteria: { true: "Broken product behavior", false: "Question or feature request" } },
+  },
+}, { provider: "openrouter" });
+
+getChoiceAnswer(raw, "team").choice;   // "payments"
+getScoreAnswer(raw, "urgency").score;  // 2 (blocking revenue)
+getNoulAnswer(raw, "is_bug").noul;     // 0.96
+```
+
+Details and more patterns: [Jev primitives](docs/jev-primitives.md).
+
 ## Manifest contract
 
 ```json
@@ -195,6 +218,12 @@ When Jev selects a filtered candidate, the router can choose the highest-probabi
 ## Scope and evidence
 
 The Jev API shape in this repository follows TypeSafe's public docs: `POST /v1/systemone` with `state`, `model`, and a `Choice` question; responses contain `choice`, `probabilities`, and `confidence`. The OpenRouter adapter follows OpenRouter's public Decisions endpoint and preserves the returned typed answers. Provider performance and accuracy claims remain provider claims; this repository does not present them as JevRouter benchmarks.
+
+What the official docs establish, verified against the live API:
+
+- **Jev is text-only.** Per the [TypeSafe State docs](https://docs.typesafe.ai/concepts/state): "Images, audio, and video are not supported (yet)." `state` must be a string, JSON object, or array of text values. (OpenRouter's alpha Decisions endpoint does not reject image parts, and image content does shift answers in our probes — but with near-zero confidence. Do not build on it; treat Jev as text-only.)
+- **Structured state is first-class.** `RouteInput.context` (and `actor`) are sent as a JSON object — `{request, actor?, context}` — instead of being flattened into the request string; a bare request stays a plain string. Jev's primary training language is English; other languages, including CJK, work but currently score lower accuracy, so English state is the safer default.
+- **Three primitives, one call.** Choice, Score, and Noul questions can be mixed in a single request — see [Jev primitives](docs/jev-primitives.md) and the SDK `evaluate()` below.
 
 <details>
 <summary id="中文介绍">中文介绍</summary>

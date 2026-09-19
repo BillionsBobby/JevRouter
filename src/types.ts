@@ -83,17 +83,53 @@ export interface JevRawResponse {
   [key: string]: unknown;
 }
 
+export type StateValue = string | Record<string, unknown> | unknown[];
+
 export interface JevChoiceQuestion {
+  type?: "choice";
   instructions?: string;
+  /** Criteria override; defaults to one criterion per candidate. */
+  criteria?: Record<string, unknown>;
+}
+
+export interface JevScoreQuestion {
+  type: "score";
+  instructions?: string;
+  /** Ordered score levels (at least one), per the TypeSafe Score primitive. */
+  criteria: unknown[];
+}
+
+export interface JevNoulQuestion {
+  type: "noul";
+  instructions?: string;
+  /** Optional true/false guidance, per the TypeSafe Noul primitive. */
+  criteria?: { true: unknown; false: unknown };
+}
+
+export type JevRouteQuestion = JevChoiceQuestion | JevScoreQuestion | JevNoulQuestion;
+
+export interface JevScoreAnswer {
+  type: "score";
+  score: number;
+  probabilities?: Record<string, number>;
+  confidence?: number;
+  legend?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface JevNoulAnswer {
+  type: "noul";
+  noul: number;
+  [key: string]: unknown;
 }
 
 export interface JevRouteRequest {
-  state: string;
+  state: StateValue;
   candidates: CapabilityManifest[];
   model?: string;
-  /** Optional batch of Choice questions keyed by name (e.g. step1..stepN).
-   * When omitted, providers ask the single default `tool` question. */
-  questions?: Record<string, JevChoiceQuestion>;
+  /** Optional batch of questions keyed by name (e.g. step1..stepN).
+   * When omitted, providers ask the single default `tool` Choice question. */
+  questions?: Record<string, JevRouteQuestion>;
 }
 
 export interface JevProvider {

@@ -13,6 +13,7 @@ import type {
   RouterCandidate,
   RouterPolicy,
   RiskLevel,
+  StateValue,
 } from "./types.js";
 import { defaultPolicy } from "./manifest.js";
 import { getChoiceAnswer, JevProviderError } from "./provider.js";
@@ -332,7 +333,7 @@ export class JevRouter {
     };
   }
 
-  private async decideWithStages(state: string, ordered: CapabilityManifest[], instructions?: string): Promise<DecidedAnswer> {
+  private async decideWithStages(state: StateValue, ordered: CapabilityManifest[], instructions?: string): Promise<DecidedAnswer> {
     const questions = instructions === undefined ? undefined : { tool: { instructions } };
     const coarseRaw = await this.provider.decide({ state, candidates: ordered, ...(questions ? { questions } : {}) });
     const coarseAnswer = getChoiceAnswer(coarseRaw);
@@ -473,10 +474,16 @@ function remapStages(stages: Map<string, "single" | "coarse" | "final">, stage: 
   return [...stages.keys()].map((id) => [id, stage]);
 }
 
-function renderState(input: RouteInput): string {
-  const context = input.context && Object.keys(input.context).length > 0 ? `\nContext:\n${JSON.stringify(input.context)}` : "";
-  const actor = input.actor ? `\nActor: ${input.actor}` : "";
-  return `${input.request}${actor}${context}`;
+function renderState(input: RouteInput): StateValue {
+  // Jev accepts a string, a JSON object, or an array of text values. Keep the
+  // plain string for a bare request (unchanged behavior); upgrade to a
+  // structured object when actor/context exist so no structure is flattened.
+  const hasContext = Boolean(input.context && Object.keys(input.context).length > 0);
+  if (!input.actor && !hasContext) return input.request;
+  const state: Record<string, unknown> = { request: input.request };
+  if (input.actor) state.actor = input.actor;
+  if (hasContext) state.context = input.context;
+  return state;
 }
 
 function candidateView(

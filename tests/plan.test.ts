@@ -14,6 +14,10 @@ function choiceAnswer(choice: string, probabilities: Record<string, number>, con
   return { type: "choice", choice, probabilities, confidence };
 }
 
+function stateText(state: unknown): string {
+  return typeof state === "string" ? state : JSON.stringify(state);
+}
+
 class RecordingProvider implements JevProvider {
   readonly name = "recording";
   calls: JevRouteRequest[] = [];
@@ -69,9 +73,9 @@ test("serial plan feeds prior selections forward in the state", async () => {
   });
   const plan = await new JevRouter(provider, { min_confidence: 0.55 }).plan({ request: "read, write, read again" }, candidates, { steps: 3, mode: "serial" });
   assert.equal(provider.calls.length, 3);
-  assert.equal(provider.calls[0].state, "read, write, read again");
-  assert.match(provider.calls[1].state, /previous steps, in order: a\.read/);
-  assert.match(provider.calls[2].state, /previous steps, in order: a\.read, b\.write/);
+  assert.equal(stateText(provider.calls[0].state), "read, write, read again");
+  assert.match(stateText(provider.calls[1].state), /previous steps, in order: a\.read/);
+  assert.match(stateText(provider.calls[2].state), /previous steps, in order: a\.read, b\.write/);
   assert.equal(plan.mode, "serial");
   assert.equal(plan.raw_jev, null);
   assert.deepEqual(plan.steps.map((step) => step.decision.selected), ["a.read", "b.write", "a.read"]);
@@ -160,10 +164,10 @@ test("decompose routes each injected sub-goal and threads plan context", async (
   );
   assert.equal(plan.mode, "decompose");
   assert.equal(plan.steps.length, 2);
-  assert.match(provider.calls[0].state, /Sub-goal 1 of 2: first sub-goal/);
-  assert.match(provider.calls[0].state, /original multi-step request/);
-  assert.match(provider.calls[1].state, /Sub-goal 2 of 2: second sub-goal/);
-  assert.match(provider.calls[1].state, /already routed in previous steps, in order: a\.read/);
+  assert.match(stateText(provider.calls[0].state), /Sub-goal 1 of 2: first sub-goal/);
+  assert.match(stateText(provider.calls[0].state), /original multi-step request/);
+  assert.match(stateText(provider.calls[1].state), /Sub-goal 2 of 2: second sub-goal/);
+  assert.match(stateText(provider.calls[1].state), /already routed in previous steps, in order: a\.read/);
 });
 
 test("hierarchical routing picks a group first, then a member", async () => {
@@ -191,8 +195,8 @@ test("serial plan includes the plan sketch in every step state", async () => {
     { request: "do things" }, candidates,
     { steps: 2, mode: "serial", plan_hint: ["do first thing", "do second thing"] },
   );
-  assert.match(provider.calls[0].state, /Plan sketch:\n1\. do first thing\n2\. do second thing/);
-  assert.match(provider.calls[1].state, /Plan sketch/);
+  assert.match(stateText(provider.calls[0].state), /Plan sketch:\n1\. do first thing\n2\. do second thing/);
+  assert.match(stateText(provider.calls[1].state), /Plan sketch/);
 });
 
 test("sequence reranking does not select a candidate whose input schema rejects the request", async () => {

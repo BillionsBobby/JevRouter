@@ -1,8 +1,10 @@
 import type {
   CapabilityManifest,
   JevChoiceAnswer,
-  JevChoiceQuestion,
+  JevNoulAnswer,
   JevRawResponse,
+  JevRouteQuestion,
+  JevScoreAnswer,
   JevProvider,
   JevRouteRequest,
 } from "./types.js";
@@ -13,17 +15,32 @@ import { clamp, sha256 } from "./utils.js";
 export const DEFAULT_TOOL_QUESTION = "tool";
 export const DEFAULT_QUESTION_INSTRUCTIONS = "Which single capability should handle this request? Choose only from the supplied options.";
 
-/** Build the questions payload: the caller-supplied batch, or the single default tool question. */
-function buildQuestions(request: JevRouteRequest): Record<string, { type: "choice"; instructions: string; criteria: Record<string, string> }> {
-  const criteria = Object.fromEntries(
-    request.candidates.map((candidate) => [candidate.id, describeCapability(candidate)]),
-  );
-  const requested: Record<string, JevChoiceQuestion> = request.questions ?? { [DEFAULT_TOOL_QUESTION]: {} };
+/** Build the questions payload: the caller-supplied batch, or the single default tool question.
+ * Supports all three Jev primitives (Choice, Score, Noul) per the TypeSafe docs. */
+function buildQuestions(request: JevRouteRequest): Record<string, Record<string, unknown>> {
+  const requested: Record<string, JevRouteQuestion> = request.questions ?? { [DEFAULT_TOOL_QUESTION]: {} };
   return Object.fromEntries(
-    Object.entries(requested).map(([key, question]) => [
-      key,
-      { type: "choice" as const, instructions: question.instructions ?? DEFAULT_QUESTION_INSTRUCTIONS, criteria },
-    ]),
+    Object.entries(requested).map(([key, question]) => {
+      const type = question.type ?? "choice";
+      if (type === "score") {
+        if (!Array.isArray(question.criteria) || question.criteria.length === 0) {
+          throw new Error(`questions.${key}: score questions require a non-empty criteria array of ordered levels`);
+        }
+        return [key, { type: "score", instructions: question.instructions ?? DEFAULT_QUESTION_INSTRUCTIONS, criteria: question.criteria }];
+      }
+      if (type === "noul") {
+        const payload: Record<string, unknown> = { type: "noul", instructions: question.instructions ?? DEFAULT_QUESTION_INSTRUCTIONS };
+        if (question.criteria !== undefined) payload.criteria = question.criteria;
+        return [key, payload];
+      }
+      const criteria = question.criteria ?? Object.fromEntries(
+        request.candidates.map((candidate) => [candidate.id, describeCapability(candidate)]),
+      );
+      if (Object.keys(criteria).length === 0) {
+        throw new Error(`questions.${key}: choice questions need at least one criterion (supply candidates or an explicit criteria map)`);
+      }
+      return [key, { type: "choice", instructions: question.instructions ?? DEFAULT_QUESTION_INSTRUCTIONS, criteria }];
+    }),
   );
 }
 
@@ -168,28 +185,59 @@ export class DemoProvider implements JevProvider {
   readonly name = "jevrouter-demo";
 
   async decide(request: JevRouteRequest): Promise<JevRawResponse> {
-    const requestTokens = tokenize(request.state);
-    const rawScores = request.candidates.map((candidate) => {
-      const haystack = tokenize(`${candidate.id} ${candidate.name} ${candidate.description} ${(candidate.metadata?.tags ?? "") as string}`);
-      const overlap = [...requestTokens].filter((token) => haystack.has(token)).length;
-      const sourceBoost = candidate.type === "mcp_tool" ? 0.03 : 0;
-      return { candidate, score: overlap + sourceBoost + 0.01 };
-    });
-    const total = rawScores.reduce((sum, item) => sum + item.score, 0);
-    const probabilities = Object.fromEntries(rawScores.map(({ candidate, score }) => [candidate.id, score / total]));
-    const choice = [...rawScores].sort((a, b) => b.score - a.score || a.candidate.id.localeCompare(b.candidate.id))[0]?.candidate.id;
-    const top = choice ? probabilities[choice] : 0;
-    const confidence = rawScores.length <= 1
-      ? 1
-      : clamp((top - 1 / rawScores.length) / Math.max(1 - 1 / rawScores.length, 0.0001));
-    const answer: JevChoiceAnswer = { type: "choice", choice: choice ?? "", probabilities, confidence };
-    const questionKeys = Object.keys(request.questions ?? { [DEFAULT_TOOL_QUESTION]: {} });
+    const requestTokens = tokenize(stateToText(request.state));
+    const requested: Record<string, JevRouteQuestion> = request.questions ?? { [DEFAULT_TOOL_QUESTION]: {} };
+    const answers = Object.fromEntries(Object.entries(requested).map(([key, question]) => {
+      if ((question.type ?? "choice") === "choice") {
+        const criteria = question.criteria ?? Object.fromEntries(
+          request.candidates.map((candidate) => [candidate.id, describeCapability(candidate)]),
+        );
+        if (Object.keys(criteria).length === 0) {
+          throw new Error(`questions.${key}: choice questions need at least one criterion (supply candidates or an explicit criteria map)`);
+        }
+        const rawScores = Object.entries(criteria).map(([id, criterion]) => ({
+          id,
+          score: [...requestTokens].filter((token) => tokenize(stateToText(criterion)).has(token)).length + 0.01,
+        }));
+        const total = rawScores.reduce((sum, item) => sum + item.score, 0);
+        const probabilities = Object.fromEntries(rawScores.map(({ id, score }) => [id, score / total]));
+        const choice = [...rawScores].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))[0]?.id ?? "";
+        const top = choice ? probabilities[choice] : 0;
+        const confidence = rawScores.length <= 1
+          ? 1
+          : clamp((top - 1 / rawScores.length) / Math.max(1 - 1 / rawScores.length, 0.0001));
+        const choiceAnswer: JevChoiceAnswer = { type: "choice", choice, probabilities, confidence };
+        return [key, choiceAnswer];
+      }
+      if (question.type === "score") {
+        const levels = Array.isArray(question.criteria) ? question.criteria : [];
+        if (levels.length === 0) {
+          throw new Error(`questions.${key}: score questions require a non-empty criteria array of ordered levels`);
+        }
+        const levelScores = levels.map((level) => [...requestTokens].filter((token) => tokenize(stateToText(level)).has(token)).length + 0.01);
+        const levelTotal = levelScores.reduce((sum, score) => sum + score, 0);
+        const levelProbabilities = Object.fromEntries(levelScores.map((score, index) => [String(index), levelTotal ? score / levelTotal : 0]));
+        const expected = levelScores.reduce((sum, score, index) => sum + index * (levelTotal ? score / levelTotal : 0), 0);
+        return [key, { type: "score", score: expected, probabilities: levelProbabilities, confidence: 1, legend: Object.fromEntries(levels.map((level, index) => [String(index), level])) }];
+      }
+      if (question.type === "noul") {
+        const criteria = question.criteria ?? { true: "true", false: "false" };
+        const trueScore = [...requestTokens].filter((token) => tokenize(stateToText(criteria.true)).has(token)).length + 0.01;
+        const falseScore = [...requestTokens].filter((token) => tokenize(stateToText(criteria.false)).has(token)).length + 0.01;
+        return [key, { type: "noul", noul: clamp(trueScore / (trueScore + falseScore)) }];
+      }
+      throw new Error(`questions.${key}: unsupported question type`);
+    }));
     return {
       model: "jevrouter-demo",
-      answers: Object.fromEntries(questionKeys.map((key) => [key, answer])),
-      usage: { input_tokens: request.state.length, output_tokens: 0 },
+      answers,
+      usage: { input_tokens: stateToText(request.state).length, output_tokens: 0 },
     };
   }
+}
+
+function stateToText(state: unknown): string {
+  return typeof state === "string" ? state : JSON.stringify(state) ?? String(state);
 }
 
 export function getChoiceAnswer(raw: JevRawResponse, key: string = DEFAULT_TOOL_QUESTION): JevChoiceAnswer {
@@ -211,6 +259,29 @@ export function getChoiceAnswer(raw: JevRawResponse, key: string = DEFAULT_TOOL_
     throw new JevProviderError("jev_malformed_response", "Invalid confidence");
   }
   return { ...(value as JevChoiceAnswer), type: "choice", choice: value.choice, probabilities, confidence };
+}
+
+export function getScoreAnswer(raw: JevRawResponse, key: string): JevScoreAnswer {
+  const answer = raw.answers?.[key];
+  if (!answer || typeof answer !== "object") throw new JevProviderError("jev_malformed_response", `Jev response is missing answers.${key}`);
+  const value = answer as Record<string, unknown>;
+  if (value.type !== "score" || typeof value.score !== "number" || !Number.isFinite(value.score) || value.score < 0) {
+    throw new JevProviderError("jev_malformed_response", `answers.${key} is not a Score answer`);
+  }
+  if (value.confidence !== undefined && (typeof value.confidence !== "number" || value.confidence < 0 || value.confidence > 1)) {
+    throw new JevProviderError("jev_malformed_response", `Invalid confidence for answers.${key}`);
+  }
+  return { ...(value as JevScoreAnswer), type: "score", score: value.score };
+}
+
+export function getNoulAnswer(raw: JevRawResponse, key: string): JevNoulAnswer {
+  const answer = raw.answers?.[key];
+  if (!answer || typeof answer !== "object") throw new JevProviderError("jev_malformed_response", `Jev response is missing answers.${key}`);
+  const value = answer as Record<string, unknown>;
+  if (value.type !== "noul" || typeof value.noul !== "number" || !Number.isFinite(value.noul) || value.noul < 0 || value.noul > 1) {
+    throw new JevProviderError("jev_malformed_response", `answers.${key} is not a Noul answer`);
+  }
+  return { ...(value as JevNoulAnswer), type: "noul", noul: value.noul };
 }
 
 function isJevRawResponse(value: unknown): value is JevRawResponse {
