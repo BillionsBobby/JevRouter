@@ -55,6 +55,7 @@
       transition: color .2s ease;
     }
     .wordmark:hover, .wordmark:focus-visible { color: var(--pink); }
+    .brand-logo { display: block; width: 158px; height: auto; }
     .mark {
       width: 26px;
       height: 26px;
@@ -209,6 +210,7 @@
       .shell { width: calc(100% - 32px); max-width: 620px; }
       .topbar { height: 64px; }
       .github span { display: none; }
+      .brand-logo { width: 132px; }
       .hero { min-height: 560px; padding: 76px 0 64px; }
       h1 { font-size: clamp(16px, 4.8vw, 64px); letter-spacing: -.065em; }
       .install { margin-top: 52px; }
@@ -228,7 +230,7 @@
   <div class="ambient" aria-hidden="true"></div>
   <canvas id="flow-canvas" aria-hidden="true"></canvas>
   <header class="shell topbar">
-    <a class="wordmark" href="./" aria-label="JevRouter home">JevRouter</a>
+    <a class="wordmark" href="./" aria-label="JevRouter home"><img class="brand-logo" src="assets/jevrouter-logo.png" alt="JevRouter"></a>
     <div class="top-actions">
       <a class="build-link" href="https://github.com/BillionsBobby/JevRouter" target="_blank" rel="noreferrer">Help build the best agent decision layer <span>→</span></a>
       <a class="github" href="https://github.com/BillionsBobby/JevRouter" target="_blank" rel="noreferrer" aria-label="Open JevRouter on GitHub">
@@ -245,7 +247,7 @@
           <pre><code data-code><span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>
 <span class="string">--agent codex</span></code></pre>
         </div>
-        <p class="agent-note" data-agent-note>Run one command, choose the official Jev API or OpenRouter at the prompt, and keep routing inside your Agent.</p>
+        <p class="agent-note" data-agent-note>Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.</p>
       </div>
     </section>
     <section class="routing">
@@ -360,8 +362,8 @@
       claude: '<span class="prompt">npx --yes github:BillionsBobby/JevRouter agent start</span>\n<span class="string">--agent claude</span>'
     };
     const noteByAgent = {
-      codex: 'The command asks for the official Jev API or OpenRouter key without writing it to disk, then launches a persistent Codex session.',
-      claude: 'The command asks for the official Jev API or OpenRouter key without writing it to disk, then launches a persistent Claude Code session.'
+      codex: 'Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.',
+      claude: 'Use JevRouter + a Jev API key (including OpenRouter) with any agent to make smarter decisions and save <strong>99.97%*</strong> of your tokens.'
     };
     const codeBlock = document.querySelector('[data-code]');
     const agentNote = document.querySelector('[data-agent-note]');
