@@ -8,11 +8,11 @@ Run in the project in which the Agent will work. This command keeps the host Age
 npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-The command asks whether to use the official Jev API or OpenRouter and reads the key without echoing it. For Claude Code, change `--agent codex` to `--agent claude`. In CI or another non-interactive shell, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` and optionally pass `--provider typesafe|openrouter`.
+The command asks whether to use the official Jev API or OpenRouter and reads the key without echoing it. For Claude Code, change `--agent codex` to `--agent claude`, and for Cursor use `--agent cursor`. In CI or another non-interactive shell, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` and optionally pass `--provider typesafe|openrouter`.
 
 The command performs a small live Jev connection check, installs a Skill and project instructions, and launches the installed host CLI with the same environment. The process stays attached until the host exits; the generated files remain for later sessions. Each check sends a labelled two-option connectivity request and may incur an API charge. It does not route a user task or fabricate a capability catalog. The Agent's own model account is separate from the Jev key. For future non-interactive sessions, add the selected environment variable to a shell profile or secret manager.
 
-`agent setup` installs without launching. Its default target is both Codex and Claude; `--agent codex|claude` restricts it. `--skip-check` is an explicit offline install and requires later validation. `export KEY=...; ... setup` retains the key for future terminal commands. Desktop hosts must also be launched with that environment.
+`agent setup` installs without launching. Its default target is Codex, Claude, and Cursor; `--agent codex|claude|cursor` restricts it. `--skip-check` is an explicit offline install and requires later validation. `export KEY=...; ... setup` retains the key for future terminal commands. Desktop hosts must also be launched with that environment.
 
 ## Installed files
 
@@ -20,8 +20,11 @@ The command performs a small live Jev connection check, installs a Skill and pro
 |---|---|
 | `AGENTS.md` or existing nonempty `AGENTS.override.md` | Codex project routing rule |
 | `CLAUDE.md` | Claude Code project routing rule |
+| `.cursorrules` | Cursor project routing rule |
 | `.agents/skills/jevrouter/SKILL.md` | Codex Skill (`$jevrouter`) |
 | `.claude/skills/jevrouter/SKILL.md` | Claude Skill (`/jevrouter`) |
+| `.cursor/skills/jevrouter/SKILL.md` | Cursor Skill (`@jevrouter`) |
+| `.cursor/mcp.json` | Optional Cursor MCP configuration (when `--with-mcp` is passed) |
 | Each Skill's `scripts/route.mjs` | Invokes the installed CLI in the project directory |
 | `.jevrouter/integration-v2.json` | Non-secret provider/key-name and launcher metadata |
 

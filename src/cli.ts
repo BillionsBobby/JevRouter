@@ -193,10 +193,10 @@ async function serveMcp(args: string[]): Promise<void> {
 
 async function agent(args: string[]): Promise<void> {
   const action = args[0];
-  if (!["setup", "doctor", "start"].includes(action)) throw new Error("usage: jevrouter agent setup|doctor|start [--agent codex|claude|all]");
-  const target = (option(args, "--agent") ?? "all") as "codex" | "claude" | "all";
-  if (!["codex", "claude", "all"].includes(target)) throw new Error("--agent must be codex, claude, or all");
-  if (action === "start" && target === "all") throw new Error("agent start requires --agent codex or --agent claude");
+  if (!["setup", "doctor", "start"].includes(action)) throw new Error("usage: jevrouter agent setup|doctor|start [--agent codex|claude|cursor|all]");
+  const target = (option(args, "--agent") ?? "all") as "codex" | "claude" | "cursor" | "all";
+  if (!["codex", "claude", "cursor", "all"].includes(target)) throw new Error("--agent must be codex, claude, cursor, or all");
+  if (action === "start" && target === "all") throw new Error("agent start requires --agent codex, --agent claude, or --agent cursor");
   const provider = option(args, "--provider") as "typesafe" | "openrouter" | undefined;
   if (provider !== undefined && !["typesafe", "openrouter"].includes(provider)) throw new Error("--provider must be typesafe or openrouter");
   if (action === "doctor") {
@@ -210,7 +210,7 @@ async function agent(args: string[]): Promise<void> {
   const check = args.includes("--skip-check") ? null : await probeJev(resolvedProvider, m => console.error(m));
   const results = await setupAgents(target, root, resolvedProvider, { withMcp: args.includes("--with-mcp") });
   console.log(JSON.stringify({ status: "installed", check, files: results }, null, 2));
-  console.error("JevRouter READY. Use $jevrouter in Codex or /jevrouter in Claude Code. Keep the key exported in the Agent environment. Setup does not route later tasks by itself.");
+  console.error("JevRouter READY. Use $jevrouter in Codex, /jevrouter in Claude Code, or @jevrouter in Cursor. Keep the key exported in the Agent environment. Setup does not route later tasks by itself.");
   if (action === "start") {
     const prompt = option(args, "--request");
     const hostArgs = prompt ? ["--", prompt] : [];
@@ -268,9 +268,9 @@ Commands:
        [--state-detail names|targets] [--provider demo|typesafe|openrouter]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
-  agent setup [--agent codex|claude|all] [--provider typesafe|openrouter] [--skip-check] [--with-mcp]
-  agent start --agent codex|claude [--request "..."]  check Jev, install Skill, launch host
-  agent doctor [--agent codex|claude|all] [--live]   configuration check; optional real Jev probe
+  agent setup [--agent codex|claude|cursor|all] [--provider typesafe|openrouter] [--skip-check] [--with-mcp]
+  agent start --agent codex|claude|cursor [--request "..."]  check Jev, install Skill, launch host
+  agent doctor [--agent codex|claude|cursor|all] [--live]   configuration check; optional real Jev probe
 
 Environment:
   TYPESAFE_API_KEY or JEV_API_KEY   official Jev API key
