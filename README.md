@@ -1,29 +1,36 @@
 # JevRouter
 
-<p><a href="#jevrouter">English</a> · <a href="#chinese">中文</a></p>
+<p><a href="https://billionsbobby.github.io/JevRouter/">官网 ↗</a> · <a href="#jevrouter">English</a> · <a href="#chinese">中文</a></p>
 
 <details open>
 <summary>English</summary>
 
-JevRouter is a small, local-first router for Agent capabilities. It turns models, Subagents, Skills, MCP Tools, CLIs and DSH plugins into one candidate set, asks Jev one typed Choice question, and applies hard policy checks around the returned decision.
+JevRouter is a local-first, policy-aware router for Agent capabilities. It turns models, Subagents, Skills, MCP Tools, CLIs and DSH plugins into one typed candidate set, asks Jev a Choice question, and returns a decision that an Agent can safely act on.
 
-The key contract is simple: Jev owns the decision probabilities; JevRouter owns availability, permissions, risk and confirmation. Router fields live under `router`, while the original `probabilities`, `confidence`, and complete provider response remain intact. Filtered candidates are never re-normalized.
+The important boundary is explicit: **Jev makes the semantic decision; JevRouter makes it usable in an Agent system.** Jev owns the choice, probability distribution and confidence. JevRouter owns capability discovery, availability, permissions, risk, confirmation, input validation and persistence. Router fields live under `router`; the original `probabilities`, `confidence` and complete provider response stay intact. Filtered candidates are never re-normalized.
 
-Small candidate sets use one Jev Choice call. When `single_stage_max_candidates` is exceeded, JevRouter first keeps the coarse Top-K candidates, then asks Jev for a final Choice over that reduced set. Both raw responses are returned in `raw_jev_stages`; coarse probabilities remain attached to candidates that were not sent to the final stage.
+Small candidate sets use one Jev Choice call. When `single_stage_max_candidates` is exceeded, JevRouter keeps a coarse Top-K from the first Jev response, then asks Jev for a final Choice over that reduced set. Both raw responses are returned in `raw_jev_stages`, so the routing trail remains inspectable.
 
 ## Why this shape
 
-TypeSafe documents Jev as a System One model: structured state in, typed decisions with probability distributions and confidence out. That makes it useful as a fast decision layer in front of tools, while a normal reasoning model can remain the execution or fallback layer. JevRouter keeps that boundary explicit and defaults to decision-only mode.
+TypeSafe documents Jev as a System One model: structured state in, typed decisions with probabilities and confidence out. That contract gives JevRouter a decision layer with properties that are difficult to make reliable when a general reasoning model is asked to emit free-form tool calls:
+
+- **A typed decision, not a generated tool call.** Jev chooses only from the candidate IDs supplied by the host.
+- **A usable uncertainty signal.** Every candidate keeps Jev's probability, and the router can return `no_decision` when confidence is below policy instead of pretending that a weak guess is certain.
+- **A small, efficient decision step.** The benchmark below measures Jev on ordered routing decisions; it is designed for choosing the next capability while another model or the host performs execution.
+- **Structured state for plans.** Serial plans feed earlier selections back into the next Jev question; batch plans ask several typed Choice questions in one provider call.
+
+JevRouter adds the system boundary around that model: manifests and discovery, policy filters, confirmation states, JSON input checks, append-only decision records, local caching and SDK/CLI/HTTP/MCP entry points. The default is decision-only mode, so the host Agent remains responsible for executing the selected capability.
 
 The core integration is the one-call SDK or CLI. MCP is an optional compatibility adapter for Agents that already load tools through MCP; it exposes one `jev_route` tool and does not execute the selected capability implicitly.
 
 ![From Jev API to JevRouter](docs/assets/jev-api-vs-jevrouter.png)
 
-The distinction is architectural: **Jev provides the semantic decision**, while **JevRouter turns that decision into an agent workflow**. With the API alone, the caller still has to define state, options, tool catalogs, confidence handling, integrations, and the agent loop. JevRouter accepts a high-level goal, selects and coordinates the relevant capabilities, applies policy, and returns a usable result. The same decision model remains underneath; the developer experience moves from individual choices to complete orchestration.
+The distinction is architectural: **Jev provides the decision signal**, while **JevRouter turns that signal into a traceable Agent workflow**. With the Jev API alone, the caller still has to define candidate manifests, confidence handling, capability integrations and the Agent loop. JevRouter accepts a high-level goal, supplies the candidates and structured state, preserves Jev's raw answer, applies local policy, and returns `selected`, `needs_confirmation` or `no_decision` with provenance. The model stays small and typed; the surrounding system becomes composable.
 
 ## Benchmark snapshot
 
-We evaluated Jev on 10 Toolathlon tasks by predicting each task's first five ordered tool calls, comparing it with DeepSeek V4.1 Flash. In serial mode, Jev reached **38% position-wise accuracy** versus 24%, achieved a **0.9 mean longest common prefix** versus 0.5, ran about **5.5× faster** (1.58s vs 8.65s per task), and cost about **7× less** ($0.0058 vs $0.0407 for 10 tasks). The experiment measures ordered routing decisions, not end-to-end task completion.
+We evaluated Jev on 10 Toolathlon tasks by predicting each task's first five ordered tool calls, comparing it with DeepSeek V4.1 Flash. In serial mode, Jev reached **38% position-wise accuracy** versus 24%, achieved a **0.9 mean longest common prefix** versus 0.5, ran about **5.5× faster** (1.58s vs 8.65s per task), and cost about **7× less** ($0.0058 vs $0.0407 for 10 tasks). This is evidence for Jev as a fast, low-cost routing layer; the experiment measures ordered routing decisions, not end-to-end task completion or a universal product guarantee.
 
 ## Quick start
 
@@ -208,25 +215,32 @@ MIT.
 <details id="chinese">
 <summary>中文</summary>
 
-JevRouter 是一个本地优先的 Agent 能力路由器。它将模型、Subagent、Skill、MCP 工具、CLI 和 DSH 插件统一为候选集，由 Jev 提出一个类型安全的 Choice 问题，再由 JevRouter 执行可用性、权限、风险和确认策略。
+JevRouter 是一个本地优先、带策略边界的 Agent 能力路由器。它将模型、Subagent、Skill、MCP 工具、CLI 和 DSH 插件统一为类型化候选集，由 Jev 做出 Choice 决策，再由 JevRouter 返回 Agent 可以安全处理的结果。
 
-核心契约很简单：Jev 负责决策概率；JevRouter 负责安全边界。路由字段位于 `router` 下，原始 `probabilities`、`confidence` 和完整 provider 响应都会保留。被过滤的候选不会被重新归一化。
+核心边界很清楚：**Jev 负责语义决策，JevRouter 负责把决策接入 Agent 系统。** Jev 负责选择、概率分布和置信度；JevRouter 负责能力发现、可用性、权限、风险、确认、输入校验和持久化。路由字段位于 `router` 下，原始 `probabilities`、`confidence` 和完整 provider 响应都会保留，被过滤的候选不会被重新归一化。
 
-候选集较小时只调用一次 Jev Choice。当候选数超过 `single_stage_max_candidates`，JevRouter 先保留粗排 Top-K，再对缩小后的集合进行最终 Choice。两阶段原始响应保存在 `raw_jev_stages` 中。
+候选集较小时只调用一次 Jev Choice。当候选数超过 `single_stage_max_candidates`，JevRouter 先从第一阶段的 Jev 响应中保留粗排 Top-K，再对缩小后的集合进行最终 Choice。两阶段原始响应保存在 `raw_jev_stages` 中，完整路由过程可检查、可追溯。
 
 ## 为什么采用这种架构
 
-TypeSafe 将 Jev 定义为 System One 模型：输入结构化状态，输出带概率分布和置信度的类型化决策。因此 Jev 适合作为工具前的快速决策层，而普通推理模型可以继续负责执行或兜底。JevRouter 明确保留这条边界，默认只做决策，不隐式执行能力。
+TypeSafe 将 Jev 定义为 System One 模型：输入结构化状态，输出带概率分布和置信度的类型化决策。这个契约让 Jev 天然适合做快速路由层：
+
+- **输出类型化选择，而不是自由生成工具调用。** Jev 只会在宿主提供的候选 ID 中做选择。
+- **输出可用的不确定性信号。** 每个候选保留 Jev 的概率；当置信度低于策略阈值时，路由器返回 `no_decision`，不会把弱猜测伪装成确定答案。
+- **决策步骤小而高效。** 下面的基准衡量的是有序路由决策，适合在由其他模型或宿主负责执行时选择下一项能力。
+- **结构化状态支持多步计划。** 串行计划会把前一步选择反馈给下一次 Jev 问题；批量计划可以在一次 provider 调用中询问多个 Choice 问题。
+
+JevRouter 在模型外补齐系统边界：manifest 与能力发现、策略过滤、确认状态、JSON 输入校验、追加写入的决策记录、本地缓存，以及 SDK/CLI/HTTP/MCP 接入。默认是只做决策，宿主 Agent 仍负责执行选中的能力。
 
 核心集成是一次调用的 SDK 或 CLI。MCP 是可选兼容适配器，向已经通过 MCP 加载工具的 Agent 暴露一个 `jev_route` 工具，但不会隐式执行选中的能力。
 
 ![从 Jev API 到 JevRouter](docs/assets/jev-api-vs-jevrouter.png)
 
-这张图说明了两层的分工：**Jev 提供语义决策能力**，**JevRouter 将决策组织成 Agent 工作流**。只使用 API 时，调用方仍需自行定义状态、选项、工具目录、置信度处理、工具集成和 Agent 循环；使用 JevRouter 时，只需描述目标，路由器负责选择和编排相关能力、执行策略检查，并返回可使用的结果。底层仍是同一个决策模型，但开发体验从单次选择提升为完整编排。
+这张图说明了两层的分工：**Jev 提供决策信号**，**JevRouter 将信号组织成可追踪的 Agent 工作流**。只使用 Jev API 时，调用方仍需自行定义候选 manifest、置信度处理、能力集成和 Agent 循环；使用 JevRouter 时，可以直接描述目标，由路由器提供候选和状态、保留原始响应、执行本地策略，并返回 `selected`、`needs_confirmation` 或 `no_decision` 以及 provenance。底层仍是同一个小而类型化的决策模型，但开发体验从单次选择扩展为可组合的路由系统。
 
 ## 基准结果概览
 
-我们在 Toolathlon 的 10 个任务上，让 Jev 与 DeepSeek V4.1 Flash 预测每个任务前 5 个有序工具调用。Jev 串行模式达到 **38% 的位置命中率**（DeepSeek 为 24%）、**0.9 的平均最长公共前缀**（0.5），速度约快 **5.5 倍**（每个任务 1.58 秒对 8.65 秒），10 个任务成本约低 **7 倍**（$0.0058 对 $0.0407）。该实验衡量的是有序路由决策，不是端到端任务完成率。
+我们在 Toolathlon 的 10 个任务上，让 Jev 与 DeepSeek V4.1 Flash 预测每个任务前 5 个有序工具调用。Jev 串行模式达到 **38% 的位置命中率**（DeepSeek 为 24%）、**0.9 的平均最长公共前缀**（0.5），速度约快 **5.5 倍**（每个任务 1.58 秒对 8.65 秒），10 个任务成本约低 **7 倍**（$0.0058 对 $0.0407）。这支持 Jev 作为快速、低成本路由层的定位；该实验衡量的是有序路由决策，不是端到端任务完成率，也不是普遍产品保证。
 
 ## 快速开始
 
