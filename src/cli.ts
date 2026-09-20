@@ -15,6 +15,7 @@ import { doctorAgents, resolveHostCommand, setupAgents } from "./agent-setup.js"
 import { parse } from "yaml";
 import { probeJev, runPlanRequest, runRouteRequest } from "./route-command.js";
 import { ensureAgentCredentials } from "./credentials.js";
+import { startDashboardServer } from "./dashboard.js";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
     if (command === "route") return await route(rest);
     if (command === "plan") return await plan(rest);
     if (command === "serve") return await serve(rest);
+    if (command === "dashboard") return await dashboard(rest);
     if (command === "serve-mcp") return await serveMcp(rest);
     if (command === "agent") return await agent(rest);
     printHelp();
@@ -186,6 +188,14 @@ async function serve(args: string[]): Promise<void> {
   server.listen(port, "127.0.0.1", () => console.log(`JevRouter listening at http://127.0.0.1:${port}`));
 }
 
+async function dashboard(args: string[]): Promise<void> {
+  const port = Number(option(args, "--port") ?? 8788);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("--port must be between 1 and 65535");
+  const server = await startDashboardServer(root, port);
+  console.log(`JevRouter dashboard at http://127.0.0.1:${port}`);
+  await new Promise<void>((resolve) => server.once("close", resolve));
+}
+
 async function serveMcp(args: string[]): Promise<void> {
   const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
   await startMcpServer({ registry, policy, provider: createProvider(option(args, "--provider")) });
@@ -269,6 +279,7 @@ Commands:
        [--sequence argmax|beam] [--diversity-penalty 1.0] [--group-by server|type] [--decompose rule] [--thread-context]
        [--state-detail names|targets] [--provider demo|typesafe|openrouter]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
+  dashboard [--port 8788]  local read-only receipt dashboard (no Jev key required)
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
   agent setup [--agent codex|claude|cursor|all] [--provider typesafe|openrouter] [--skip-check] [--with-mcp]
   agent start --agent codex|claude|cursor [--request "..."]  check Jev, install Skill, launch host
