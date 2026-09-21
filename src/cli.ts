@@ -175,7 +175,7 @@ async function serve(args: string[]): Promise<void> {
       if (request.method === "POST" && request.url === "/route") {
         const payload = JSON.parse(await readBody(request)) as RouteInput;
         if (!payload.request || typeof payload.request !== "string") return sendJson(response, 400, { error: "request is required" });
-        const candidates = payload.candidates?.map((candidate, index) => normalizeCapability(candidate, `request.candidates[${index}]`)) ?? await registry.list();
+        const candidates = payload.candidates?.map((candidate, index) => normalizeCapability(candidate, `request.candidates[${index}]`, message => console.error(message))) ?? await registry.list();
         const result = await new JevRouter(provider, policy).route(payload, candidates);
         await saveDecision(result);
         return sendJson(response, 200, result);

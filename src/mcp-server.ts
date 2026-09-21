@@ -86,7 +86,7 @@ async function callTool(message: JsonRpcMessage, options: McpServerOptions): Pro
   const candidates = args.candidates === undefined
     ? await options.registry.list()
     : Array.isArray(args.candidates)
-      ? args.candidates.map((candidate, index) => normalizeCapability(candidate, `arguments.candidates[${index}]`))
+      ? args.candidates.map((candidate, index) => normalizeCapability(candidate, `arguments.candidates[${index}]`, message => console.error(message)))
       : (() => { throw new Error("arguments.candidates must be an array"); })();
   const decision = await new JevRouter(options.provider, options.policy).route(routeInput, candidates);
   await saveDecision(decision);
