@@ -15,11 +15,11 @@ interface CandidatesPayload {
   context?: unknown;
 }
 
-async function resolveCandidates(payload: CandidatesPayload, root: string): Promise<CapabilityManifest[]> {
+async function resolveCandidates(payload: CandidatesPayload, root: string, warn: Progress = () => {}): Promise<CapabilityManifest[]> {
   if (payload.candidates !== undefined && !Array.isArray(payload.candidates)) throw new Error("candidates must be an array");
   const candidates = payload.candidates === undefined
     ? await new CapabilityRegistry(join(root, ".jevrouter/capabilities")).list()
-    : payload.candidates.map((candidate, index) => normalizeCapability(candidate, `candidates[${index}]`));
+    : payload.candidates.map((candidate, index) => normalizeCapability(candidate, `candidates[${index}]`, warn));
   if (candidates.length === 0) throw new Error("No candidates: pass this Agent's real capabilities using --stdin or --candidates-file. Jev was not called.");
   if (new Set(candidates.map(c => c.id)).size !== candidates.length) throw new Error("Candidate IDs must be unique");
   return candidates;
@@ -31,7 +31,7 @@ export async function runRouteRequest(payload: unknown, root: string, options: R
   if (typeof input.request !== "string" || !input.request.trim()) throw new Error("request must be a non-empty string describing this task");
   if (input.context !== undefined && (!input.context || typeof input.context !== "object" || Array.isArray(input.context))) throw new Error("context must be an object");
   if (input.actor_permissions !== undefined && (!Array.isArray(input.actor_permissions) || input.actor_permissions.some(x => typeof x !== "string"))) throw new Error("actor_permissions must be an array of strings");
-  const candidates = await resolveCandidates(input, root);
+  const candidates = await resolveCandidates(input, root, progress);
   const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false });
   const policy = await loadPolicyFile(options.policy ?? join(root, ".jevrouter/policy.json"));
   progress(`JevRouter START provider=${provider.name} candidates=${candidates.length}`);
@@ -79,7 +79,7 @@ export async function runPlanRequest(payload: unknown, root: string, options: Ro
   if (stateDetail !== undefined && !["names", "targets"].includes(stateDetail)) throw new Error("state_detail must be names or targets");
   if (input.plan_hint !== undefined && (!Array.isArray(input.plan_hint) || input.plan_hint.some(x => typeof x !== "string"))) throw new Error("plan_hint must be an array of strings");
   const threadContext = input.thread_context === undefined ? undefined : Boolean(input.thread_context);
-  const candidates = await resolveCandidates(input, root);
+  const candidates = await resolveCandidates(input, root, progress);
   const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false });
   const policy = await loadPolicyFile(options.policy ?? join(root, ".jevrouter/policy.json"));
   progress(`JevRouter START provider=${provider.name} candidates=${candidates.length} mode=${mode ?? (decompose ? "decompose" : "serial")} steps=${steps ?? 3}`);

@@ -57,8 +57,25 @@ export function validateManifest(input: unknown, source = "manifest"): Capabilit
   };
 }
 
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Fields an inline candidate may carry that this shape still decides for itself.
+ * `verification` and `availability` are deliberately not honoured here: an agent
+ * asserting that its own tool is verified or available would weaken the policy
+ * checks that exist to doubt it.
+ */
+const inlineFixedFields = ["verification", "availability", "execution", "metadata", "version"] as const;
+
+function ignoredInlineFields(value: Record<string, unknown>): string[] {
+  return inlineFixedFields.filter(key => value[key] !== undefined);
+}
+
 /** Accept common Agent tool shapes so callers can route without writing a manifest first. */
-export function normalizeCapability(input: unknown, source = "candidate"): CapabilityManifest {
+export function normalizeCapability(input: unknown, source = "candidate", warn: (message: string) => void = () => {}): CapabilityManifest {
   if (input && typeof input === "object") {
     const value = input as Record<string, unknown>;
     if (value.type === "function" && value.function && typeof value.function === "object") {
@@ -82,14 +99,24 @@ export function normalizeCapability(input: unknown, source = "candidate"): Capab
     }
     if (typeof value.name === "string" && !value.id) {
       const inferredType = value.type === "model" || value.type === "subagent" ? value.type : "mcp_tool";
+      // Safety metadata the caller supplied is kept: dropping a declared risk or
+      // confirmation requirement would silently make an unsafe tool look safe.
+      // Everything this shape still fixes is reported through `warn`.
+      const ignored = ignoredInlineFields(value);
+      if (ignored.length > 0) {
+        warn(`${source}: inline candidate "${value.name}": ignored ${ignored.join(", ")} (send a full manifest with an id to set these)`);
+      }
       return validateManifest({
         id: value.name,
         name: value.name,
         type: inferredType,
         description: String(value.description ?? `Agent tool ${value.name}`),
         input_schema: value.input_schema ?? value.inputSchema,
-        permissions: [],
-        risk: { level: "low", categories: ["agent_tool"] },
+        permissions: Array.isArray(value.permissions) ? value.permissions.map(String) : [],
+        risk: isRecord(value.risk)
+          ? { level: value.risk.level, categories: Array.isArray(value.risk.categories) ? value.risk.categories.map(String) : ["agent_tool"] }
+          : { level: "low", categories: ["agent_tool"] },
+        ...(isRecord(value.policy) ? { policy: { requires_confirmation: value.policy.requires_confirmation === true } } : {}),
         availability: { available: true },
         execution: { mode: inferredType === "model" || inferredType === "subagent" ? inferredType : "mcp", target: value.name, dry_run: true },
         verification: { status: "unverified", source: "agent_input" },
