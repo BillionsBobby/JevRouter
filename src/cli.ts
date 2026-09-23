@@ -11,7 +11,7 @@ import { createProvider } from "./runtime.js";
 import { saveDecision } from "./store.js";
 import type { CapabilityManifest, RouteInput } from "./types.js";
 import { startMcpServer } from "./mcp-server.js";
-import { doctorAgents, resolveHostCommand, setupAgents } from "./agent-setup.js";
+import { doctorAgents, ensureGitIgnore, resolveHostCommand, setupAgents } from "./agent-setup.js";
 import { parse } from "yaml";
 import { probeJev, runPlanRequest, runRouteRequest } from "./route-command.js";
 import { ensureAgentCredentials } from "./credentials.js";
@@ -44,6 +44,7 @@ async function init(): Promise<void> {
   await mkdir(join(root, ".jevrouter", "capabilities"), { recursive: true });
   await mkdir(join(root, ".jevrouter", "decisions"), { recursive: true });
   await writeIfMissing(join(root, ".jevrouter", "policy.json"), `${JSON.stringify(defaultPolicy, null, 2)}\n`);
+  await ensureGitIgnore(root);
   console.log("Initialized .jevrouter/ (existing files were preserved)");
 }
 

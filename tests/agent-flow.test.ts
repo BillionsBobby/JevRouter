@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS } from '../src/agent-setup.js';
+import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS, ensureGitIgnore } from '../src/agent-setup.js';
 import { providerConfiguration, createProvider } from '../src/runtime.js';
 
 const root = resolve('.');
@@ -48,10 +48,12 @@ test('one command installs CLI Skill for all hosts, checks Jev, and keeps existi
   await assert.rejects(stat(join(cwd, '.cursor/mcp.json')), { code: 'ENOENT' });
   const receipt = JSON.parse(await readFile(join(cwd, '.jevrouter/integration-v2.json'), 'utf8'));
   assert.equal(receipt.key, 'JEV_API_KEY');
+  assert.equal(await readFile(join(cwd, '.gitignore'), 'utf8'), '.jevrouter/\n');
   // The second run is idempotent: no duplicate instructions or backups.
   const before = await readFile(join(cwd, 'AGENTS.md'), 'utf8');
   assert.equal(run(cwd, ['agent', 'setup']).status, 0);
   assert.equal(await readFile(join(cwd, 'AGENTS.md'), 'utf8'), before);
+  assert.equal(await readFile(join(cwd, '.gitignore'), 'utf8'), '.jevrouter/\n');
   assert.equal((await readdir(cwd)).filter(name => name.includes('backup')).length, 3);
   const check = run(cwd, ['agent', 'doctor']);
   assert.equal(check.status, 0, check.stderr);
@@ -230,6 +232,58 @@ test('regression: agent start --agent cursor executes Cursor Agent CLI (agent or
   assert.match(resultLegacy.stderr, /CHECK passed/);
   assert.match(resultLegacy.stderr, /START host=cursor/);
   assert.match(resultLegacy.stdout, /"command":"cursor-agent"/);
+});
+
+test('ensureGitIgnore creates, appends, and is idempotent across gitignore variations', async () => {
+  const cwd = await project();
+  // 1. Missing .gitignore -> creates it
+  const created = await ensureGitIgnore(cwd);
+  assert.equal(created, true);
+  assert.equal(await readFile(join(cwd, '.gitignore'), 'utf8'), '.jevrouter/\n');
+
+  // 2. Already present -> returns false, does not duplicate
+  const second = await ensureGitIgnore(cwd);
+  assert.equal(second, false);
+  assert.equal(await readFile(join(cwd, '.gitignore'), 'utf8'), '.jevrouter/\n');
+
+  // 3. Existing .gitignore with other content and trailing newline
+  const cwd2 = await project();
+  await writeFile(join(cwd2, '.gitignore'), 'node_modules/\n.env\n', { flag: 'wx' });
+  const appended = await ensureGitIgnore(cwd2);
+  assert.equal(appended, true);
+  assert.equal(await readFile(join(cwd2, '.gitignore'), 'utf8'), 'node_modules/\n.env\n.jevrouter/\n');
+
+  // 4. Existing .gitignore without trailing newline
+  const cwd3 = await project();
+  await writeFile(join(cwd3, '.gitignore'), 'dist', { flag: 'wx' });
+  const appendedWithoutNewline = await ensureGitIgnore(cwd3);
+  assert.equal(appendedWithoutNewline, true);
+  assert.equal(await readFile(join(cwd3, '.gitignore'), 'utf8'), 'dist\n.jevrouter/\n');
+
+  // 5. Existing variations like .jevrouter or /.jevrouter/ are recognized as already ignored
+  for (const pattern of ['.jevrouter', '/.jevrouter/', '.jevrouter/*']) {
+    const cwdPattern = await project();
+    await writeFile(join(cwdPattern, '.gitignore'), `# custom ignore\n${pattern}\n`, { flag: 'wx' });
+    const result = await ensureGitIgnore(cwdPattern);
+    assert.equal(result, false);
+    assert.equal(await readFile(join(cwdPattern, '.gitignore'), 'utf8'), `# custom ignore\n${pattern}\n`);
+  }
+});
+
+test('agent setup and init ensure .jevrouter/ is in .gitignore to protect decision records from accidental commits', async () => {
+  const cwd = await project();
+  await writeFile(join(cwd, '.gitignore'), 'node_modules/\n', { flag: 'wx' });
+  const setupResult = run(cwd, ['agent', 'setup']);
+  assert.equal(setupResult.status, 0, setupResult.stderr);
+  const gitignoreContent = await readFile(join(cwd, '.gitignore'), 'utf8');
+  assert.ok(gitignoreContent.includes('node_modules/'));
+  assert.ok(gitignoreContent.includes('.jevrouter/'));
+
+  // init command also preserves existing rules and ensures .jevrouter/ is present
+  const initCwd = await project();
+  const initResult = run(initCwd, ['init']);
+  assert.equal(initResult.status, 0, initResult.stderr);
+  assert.equal(await readFile(join(initCwd, '.gitignore'), 'utf8'), '.jevrouter/\n');
 });
 
 
