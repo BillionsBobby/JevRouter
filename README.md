@@ -138,12 +138,52 @@ npx jevrouter dashboard
 
 Open `http://127.0.0.1:8788` to see routing counts, status/source/provider breakdowns, latency percentiles, selected capabilities, plan steps, and recent decisions. Execution outcome is shown as **not collected** until the host writes execution feedback, so a selected capability is never presented as a completed task.
 
+## Execution feedback protocol
+
+JevRouter records routing decisions, while the host agent records append-only execution feedback into `.jevrouter/events/events.jsonl` to measure real routing quality and task completion:
+
+```bash
+# 1. Host accepts the decision
+npx jevrouter feedback dec_12345 handoff_accepted
+
+# 2. Host starts execution
+npx jevrouter feedback dec_12345 execution_started
+
+# 3. Host records execution outcome
+npx jevrouter feedback dec_12345 execution_succeeded --details '{"exit_code":0,"duration_ms":42}'
+
+# 4. Host completes user task
+npx jevrouter feedback dec_12345 task_completed
+
+# View deterministic aggregate statistics
+npx jevrouter stats --json
+```
+
+Or programmatically via the SDK:
+
+```ts
+import { recordExecutionEvent, readExecutionEvents } from "jevrouter";
+
+await recordExecutionEvent({
+  decision_id: decision.decision_id,
+  type: "execution_started",
+});
+
+await recordExecutionEvent({
+  decision_id: decision.decision_id,
+  type: "execution_succeeded",
+  details: { duration_ms: 120 },
+});
+```
+
+Events follow strict lifecycle transitions (`handoff_accepted` $\to$ `execution_started` $\to$ `execution_succeeded`/`failed` $\to$ `task_completed`), reject unknown decision IDs, and forbid sensitive keys or tokens from being ingested. Decisions without recorded feedback are labelled `unknown`, preventing selected decisions from being falsely treated as completed tasks.
+
 ## Interfaces
 
 | Interface | Entry | Notes |
 |---|---|---|
-| CLI | `route`, `plan`, `discover`, `decision show`, `serve`, `dashboard`, `agent` | stdout is one JSON object; exit 0 = selected, 2 = review/no-decision, 1 = error |
-| SDK | `route()`, `plan()` | candidates inline or from the local registry |
+| CLI | `route`, `plan`, `feedback`, `stats`, `discover`, `decision show`, `serve`, `dashboard`, `agent` | stdout is one JSON object; exit 0 = selected, 2 = review/no-decision, 1 = error |
+| SDK | `route()`, `plan()`, `recordExecutionEvent()`, `readExecutionEvents()` | candidates inline or from the local registry |
 | HTTP | `serve --port 8787` | `POST /route`, `GET /capabilities`, `GET /health` |
 | MCP | `serve-mcp` | one `jev_route` tool for MCP-native agents; never executes implicitly |
 
