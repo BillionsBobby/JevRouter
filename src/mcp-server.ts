@@ -70,7 +70,8 @@ async function callTool(message: JsonRpcMessage, options: McpServerOptions): Pro
   const name = typeof params.name === "string" ? params.name : "";
   const args = asObject(params.arguments);
   if (name === "jev_capabilities") {
-    return toolResult(message.id, await options.registry.list());
+    // MCP requires structuredContent to be an object; the registry list is an array.
+    return toolResult(message.id, { capabilities: await options.registry.list() });
   }
   if (name !== "jev_route") return { jsonrpc: "2.0", id: message.id ?? null, error: { code: -32602, message: `Unknown tool: ${name}` } };
   if (typeof args.request !== "string" || !args.request.trim()) {
