@@ -260,3 +260,21 @@ export interface RoutePlanResult {
     policy_hash: string;
   };
 }
+
+export type FeedbackEventType =
+  | "handoff_accepted"
+  | "execution_started"
+  | "execution_succeeded"
+  | "execution_failed"
+  | "execution_cancelled"
+  | "rerouted"
+  | "task_completed";
+
+export interface FeedbackEventEnvelope {
+  event_id: string;
+  decision_id: string;
+  plan_id?: string;
+  type: FeedbackEventType;
+  timestamp: string;
+  details?: Record<string, unknown>;
+}

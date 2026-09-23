@@ -1,6 +1,8 @@
 import { createServer, type Server } from "node:http";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { readExecutionEvents, resolveDecisionExecutionState } from "./events.js";
+import type { FeedbackEventEnvelope } from "./types.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -10,6 +12,7 @@ export interface DashboardStats {
     root: string;
     decisions: string;
     plans: string;
+    events: string;
     parse_errors: number;
   };
   decisions: {
@@ -42,6 +45,8 @@ export interface DashboardStats {
     started: number;
     succeeded: number;
     failed: number;
+    cancelled: number;
+    rerouted: number;
     unknown: number;
     outcome: "not_collected" | "partial" | "collected";
   };
@@ -56,31 +61,53 @@ export async function collectDashboardStats(root = process.cwd()): Promise<Dashb
   const projectRoot = resolve(root);
   const decisionDir = join(projectRoot, ".jevrouter", "decisions");
   const planDir = join(projectRoot, ".jevrouter", "plans");
-  const [decisions, plans] = await Promise.all([
+  const eventsDir = join(projectRoot, ".jevrouter", "events");
+  const [decisions, plans, events] = await Promise.all([
     readReceipts(decisionDir),
     readReceipts(planDir),
+    readExecutionEvents(projectRoot),
   ]);
-  const decisionRows = decisions.files.map(({ value, recordedAt }) => ({
-    decision_id: stringValue(value.decision_id) ?? "unknown",
-    status: stringValue(value.status) ?? "unknown",
-    selected: nestedString(value, ["decision", "selected"]),
-    provider: nestedString(value, ["provenance", "jev_provider"]),
-    source: nestedString(value, ["runtime", "source"]),
-    elapsed_ms: nestedNumber(value, ["runtime", "elapsed_ms"]),
-    recorded_at: recordedAt,
-    execution: stringValue(nested(value, ["execution", "status"])),
-  }));
+  const eventsByDecision = new Map<string, FeedbackEventEnvelope[]>();
+  for (const event of events) {
+    const list = eventsByDecision.get(event.decision_id) ?? [];
+    list.push(event);
+    eventsByDecision.set(event.decision_id, list);
+  }
+
+  const decisionRows = decisions.files.map(({ value, recordedAt }) => {
+    const decisionId = stringValue(value.decision_id) ?? "unknown";
+    const decisionEvents = eventsByDecision.get(decisionId);
+    const resolvedExecution = decisionEvents && decisionEvents.length > 0
+      ? resolveDecisionExecutionState(decisionEvents)
+      : stringValue(nested(value, ["execution", "status"])) ?? "unknown";
+    return {
+      decision_id: decisionId,
+      status: stringValue(value.status) ?? "unknown",
+      selected: nestedString(value, ["decision", "selected"]),
+      provider: nestedString(value, ["provenance", "jev_provider"]),
+      source: nestedString(value, ["runtime", "source"]),
+      elapsed_ms: nestedNumber(value, ["runtime", "elapsed_ms"]),
+      recorded_at: recordedAt,
+      execution: resolvedExecution,
+    };
+  });
   const elapsed = decisionRows.map(row => row.elapsed_ms).filter((value): value is number => value !== null).sort((a, b) => a - b);
   const selected = countBy(decisionRows.map(row => row.selected).filter((value): value is string => Boolean(value)));
   const execution = countExecution([
     ...decisionRows.map(row => row.execution),
-    ...plans.files.flatMap(file => planSteps(file.value).map(step => nestedString(step, ["execution", "status"]))),
+    ...plans.files.flatMap(file => planSteps(file.value).map(step => {
+      const stepDecisionId = stringValue(step.decision_id);
+      const stepEvents = stepDecisionId ? eventsByDecision.get(stepDecisionId) : undefined;
+      return stepEvents && stepEvents.length > 0
+        ? resolveDecisionExecutionState(stepEvents)
+        : nestedString(step, ["execution", "status"]);
+    })),
   ]);
   const planRows = plans.files.map(file => file.value);
   const planStepsList = planRows.flatMap(plan => planSteps(plan));
   return {
     generated_at: new Date().toISOString(),
-    source: { root: projectRoot, decisions: decisionDir, plans: planDir, parse_errors: decisions.errors + plans.errors },
+    source: { root: projectRoot, decisions: decisionDir, plans: planDir, events: eventsDir, parse_errors: decisions.errors + plans.errors },
     decisions: {
       total: decisionRows.length,
       by_status: countBy(decisionRows.map(row => row.status)),
@@ -147,16 +174,18 @@ function planSteps(value: JsonRecord): JsonRecord[] {
 }
 
 function countExecution(statuses: Array<string | null>): DashboardStats["execution"] {
-  const known = { not_started: 0, started: 0, succeeded: 0, failed: 0, unknown: 0 };
+  const known = { not_started: 0, started: 0, succeeded: 0, failed: 0, cancelled: 0, rerouted: 0, unknown: 0 };
   for (const status of statuses) {
     if (status === "not_started") known.not_started += 1;
-    else if (status === "started") known.started += 1;
-    else if (status === "succeeded" || status === "completed") known.succeeded += 1;
-    else if (status === "failed") known.failed += 1;
+    else if (status === "started" || status === "execution_started" || status === "handoff_accepted") known.started += 1;
+    else if (status === "succeeded" || status === "execution_succeeded" || status === "task_completed" || status === "completed") known.succeeded += 1;
+    else if (status === "failed" || status === "execution_failed") known.failed += 1;
+    else if (status === "cancelled" || status === "execution_cancelled") known.cancelled += 1;
+    else if (status === "rerouted") known.rerouted += 1;
     else known.unknown += 1;
   }
-  const observed = known.started + known.succeeded + known.failed;
-  return { ...known, outcome: observed === 0 ? "not_collected" : known.unknown > 0 ? "partial" : "collected" };
+  const observed = known.started + known.succeeded + known.failed + known.cancelled + known.rerouted;
+  return { ...known, outcome: observed === 0 ? "not_collected" : known.not_started > 0 || known.unknown > 0 ? "partial" : "collected" };
 }
 
 function countBy(values: string[]): Record<string, number> {
