@@ -43,6 +43,15 @@ npm run dev -- discover \
   --dsh examples/dsh           # reads DSH plugin manifests
 ```
 
+Discover user-level or project-level Codex custom-agent profiles from their TOML metadata:
+
+```bash
+npm run dev -- discover --codex-agents "$CODEX_HOME/agents" \
+  --codex-agent-names explorer,reviewer
+```
+
+On Windows, pass the concrete directory, for example `C:\Users\you\.codex\agents`. `name` and `description` become the routing candidate; `developer_instructions` and other profile settings stay local. Filter by `--codex-agent-names` so a large profile directory does not inflate every Jev request. JevRouter records these as discovered subagent candidates; Codex must still spawn the selected role through its native subagent interface.
+
 Discovered capabilities become manifests in `.jevrouter/capabilities/`, written only when the destination does not already exist. Secrets stay in the child process environment and are never copied into manifests.
 
 ## Registry vs inline
