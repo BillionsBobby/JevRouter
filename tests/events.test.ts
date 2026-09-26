@@ -203,6 +203,56 @@ test("assertNoSecrets rejects sensitive keys and secret values", () => {
       counts: { lines: 10, files: 2 },
     }),
   );
+
+  // Reject non-object roots (primitives and arrays)
+  assert.throws(
+    () => assertNoSecrets("Bearer secret-token"),
+    /must be a plain JSON object/,
+  );
+  assert.throws(
+    () => assertNoSecrets(["Bearer secret-token"]),
+    /must be a plain JSON object/,
+  );
+  assert.throws(
+    () => assertNoSecrets(42),
+    /must be a plain JSON object/,
+  );
+  assert.throws(
+    () => assertNoSecrets(null),
+    /must be a plain JSON object/,
+  );
+});
+
+test("recordExecutionEvent rejects non-object details (primitives, arrays, null)", async () => {
+  const root = await createFixture();
+  try {
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: "Bearer secret-token" as unknown as Record<string, unknown> },
+          root,
+        ),
+      /Execution feedback details must be a plain JSON object/,
+    );
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: ["item"] as unknown as Record<string, unknown> },
+          root,
+        ),
+      /Execution feedback details must be a plain JSON object/,
+    );
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: null as unknown as Record<string, unknown> },
+          root,
+        ),
+      /Execution feedback details must be a plain JSON object/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("recognizes decision IDs stored inside plan files", async () => {
@@ -301,6 +351,31 @@ test("CLI feedback and stats commands record events and return deterministic agg
     );
     assert.equal(badFb.status, 1);
     assert.match(badFb.stderr, /sensitive keys or tokens/);
+
+    // 4. Run feedback with non-object details (string, array, number) -> fails with exitCode 1
+    const stringFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", '"Bearer secret-token"'],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(stringFb.status, 1);
+    assert.match(stringFb.stderr, /--details must be a JSON object/);
+
+    const arrayFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", '["Bearer secret-token"]'],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(arrayFb.status, 1);
+    assert.match(arrayFb.stderr, /--details must be a JSON object/);
+
+    const numberFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", '42'],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(numberFb.status, 1);
+    assert.match(numberFb.stderr, /--details must be a JSON object/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
