@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CapabilityRegistry, defaultPolicy, loadPolicyFile, normalizeCapability } from "./manifest.js";
 import { discoverMcpConfig } from "./mcp.js";
-import { discoverClis, discoverDsh, discoverSkills } from "./discovery.js";
+import { discoverClis, discoverCodexAgents, discoverDsh, discoverSkills } from "./discovery.js";
 import { JevRouter } from "./router.js";
 import { createProvider } from "./runtime.js";
 import { saveDecision } from "./store.js";
@@ -68,12 +68,16 @@ async function discover(args: string[]): Promise<void> {
   const mcpPath = option(args, "--mcp");
   const skillsPath = option(args, "--skills");
   const dshPath = option(args, "--dsh");
+  const codexAgentsPath = option(args, "--codex-agents");
+  const codexAgentNames = option(args, "--codex-agent-names");
   const cliNames = option(args, "--cli");
-  if (!mcpPath && !skillsPath && !dshPath && !cliNames) throw new Error("usage: jevrouter discover [--skills <dir>] [--mcp <mcp.json>] [--cli git,docker] [--dsh <dir-or-file>]");
+  if (codexAgentNames && !codexAgentsPath) throw new Error("--codex-agent-names requires --codex-agents <dir>");
+  if (!mcpPath && !skillsPath && !dshPath && !cliNames && !codexAgentsPath) throw new Error("usage: jevrouter discover [--skills <dir>] [--mcp <mcp.json>] [--cli git,docker] [--dsh <dir-or-file>] [--codex-agents <dir> [--codex-agent-names name1,name2]]");
   if (skillsPath) discovered.push(...await discoverSkills(skillsPath));
   if (mcpPath) discovered.push(...await discoverMcpConfig(mcpPath));
   if (cliNames) discovered.push(...await discoverClis(cliNames.split(",")));
   if (dshPath) discovered.push(...await discoverDsh(dshPath));
+  if (codexAgentsPath) discovered.push(...await discoverCodexAgents(codexAgentsPath, codexAgentNames?.split(",")));
   for (const manifest of discovered) {
     const path = join(root, ".jevrouter", "capabilities", `${manifest.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.json`);
     await writeIfMissing(path, `${JSON.stringify(manifest, null, 2)}\n`);

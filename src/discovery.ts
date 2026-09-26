@@ -36,6 +36,38 @@ export async function discoverSkills(root: string): Promise<CapabilityManifest[]
   return result.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** Read the routing metadata of Codex custom agents without exporting their private instructions. */
+export async function discoverCodexAgents(root: string, selectedNames?: string[]): Promise<CapabilityManifest[]> {
+  const files = await findFiles(resolve(root), (name) => name.toLowerCase().endsWith(".toml"));
+  const selected = selectedNames ? new Set(selectedNames.map((name) => name.trim()).filter(Boolean)) : null;
+  const result: CapabilityManifest[] = [];
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    const name = tomlString(source, "name");
+    const description = tomlString(source, "description");
+    if (!name || !description || (selected && !selected.has(name))) continue;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    result.push({
+      id: `codex_agent.${slug}`,
+      name,
+      type: "subagent",
+      description,
+      verification: { status: "discovered", source: "codex_agent_toml" },
+      permissions: [],
+      risk: { level: "low", categories: ["codex_subagent"] },
+      availability: { available: true, healthcheck: false },
+      execution: { mode: "subagent", target: name, dry_run: true },
+      metadata: { source: "codex_agent_toml", path: relative(root, file) },
+    });
+  }
+  if (selected) {
+    const found = new Set(result.map((candidate) => candidate.name));
+    const missing = [...selected].filter((name) => !found.has(name));
+    if (missing.length > 0) throw new Error(`Codex agent profile not found: ${missing.join(", ")}`);
+  }
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function discoverClis(commands: string[], timeoutMs = 3_000): Promise<CapabilityManifest[]> {
   const result: CapabilityManifest[] = [];
   for (const rawCommand of commands.map((value) => value.trim()).filter(Boolean)) {
@@ -124,4 +156,15 @@ function firstParagraph(source: string): string | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function tomlString(source: string, key: string): string | null {
+  const match = source.match(new RegExp(`^${key}\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|'([^']*)')\\s*(?:#.*)?$`, "m"));
+  if (!match) return null;
+  if (match[2] !== undefined) return match[2].trim();
+  try {
+    return JSON.parse(`"${match[1]}"`).trim();
+  } catch {
+    return null;
+  }
 }

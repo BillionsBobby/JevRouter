@@ -52,6 +52,8 @@ Notes:
 - `agent start` needs a real terminal (Codex is interactive); on headless machines use `agent setup` and launch Codex yourself.
 - Keep the key exported in the agent's environment; add it to your shell profile or secret manager to survive new terminals.
 - Skill instructions guide the host; they cannot intercept every built-in tool. `setup`'s `CHECK passed` proves connectivity, not that a later task was routed.
+- Route small but non-trivial steps when there are real alternatives and expected savings exceed the Jev call overhead. Keep each candidate list task-specific; for custom profiles, pass only relevant `name`/`description` metadata from `~/.codex/agents/*.toml`.
+- JevRouter returns a decision only. For a selected `subagent`, Codex must perform the native spawn; the route itself cannot launch a Codex subagent or enforce its runtime permissions.
 
 ## Uninstall / repair
 
