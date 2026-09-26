@@ -15,7 +15,8 @@ import { doctorAgents, ensureGitIgnore, resolveHostCommand, setupAgents } from "
 import { parse } from "yaml";
 import { probeJev, runPlanRequest, runRouteRequest } from "./route-command.js";
 import { ensureAgentCredentials } from "./credentials.js";
-import { startDashboardServer } from "./dashboard.js";
+import { collectDashboardStats, startDashboardServer } from "./dashboard.js";
+import { recordExecutionEvent, type FeedbackEventType } from "./events.js";
 
 const root = process.cwd();
 const registry = new CapabilityRegistry(join(root, ".jevrouter", "capabilities"));
@@ -29,6 +30,8 @@ async function main(): Promise<void> {
     if (command === "decision") return await decision(rest);
     if (command === "route") return await route(rest);
     if (command === "plan") return await plan(rest);
+    if (command === "feedback") return await feedback(rest);
+    if (command === "stats") return await stats(rest);
     if (command === "serve") return await serve(rest);
     if (command === "dashboard") return await dashboard(rest);
     if (command === "serve-mcp") return await serveMcp(rest);
@@ -43,6 +46,7 @@ async function main(): Promise<void> {
 async function init(): Promise<void> {
   await mkdir(join(root, ".jevrouter", "capabilities"), { recursive: true });
   await mkdir(join(root, ".jevrouter", "decisions"), { recursive: true });
+  await mkdir(join(root, ".jevrouter", "events"), { recursive: true });
   await writeIfMissing(join(root, ".jevrouter", "policy.json"), `${JSON.stringify(defaultPolicy, null, 2)}\n`);
   await ensureGitIgnore(root);
   console.log("Initialized .jevrouter/ (existing files were preserved)");
@@ -165,6 +169,54 @@ async function decision(args: string[]): Promise<void> {
   console.log(await readFile(path, "utf8"));
 }
 
+async function feedback(args: string[]): Promise<void> {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      i++;
+    } else {
+      positionals.push(args[i]);
+    }
+  }
+  const [decisionId, eventType] = positionals;
+  if (!decisionId || !eventType) {
+    throw new Error("usage: jevrouter feedback <decision-id> <event-type> [--details JSON] [--plan <plan-id>]");
+  }
+  const rawDetails = option(args, "--details");
+  let details: Record<string, unknown> | undefined;
+  if (rawDetails) {
+    try {
+      details = JSON.parse(rawDetails) as Record<string, unknown>;
+    } catch {
+      throw new Error("--details must be valid JSON");
+    }
+  }
+  const planId = option(args, "--plan");
+  const event = await recordExecutionEvent({
+    decision_id: decisionId,
+    type: eventType as FeedbackEventType,
+    plan_id: planId,
+    details,
+  }, root);
+  console.log(JSON.stringify(event, null, 2));
+}
+
+async function stats(args: string[]): Promise<void> {
+  const isJson = args.includes("--json");
+  const dashboardStats = await collectDashboardStats(root);
+  if (isJson) {
+    console.log(JSON.stringify(dashboardStats, null, 2));
+    return;
+  }
+  const dec = dashboardStats.decisions;
+  const exec = dashboardStats.execution;
+  console.log(`JevRouter Stats (${dashboardStats.source.root})
+Decisions: ${dec.total} (selected: ${dec.by_status.selected ?? 0}, no_decision: ${dec.by_status.no_decision ?? 0}, needs_confirmation: ${dec.by_status.needs_confirmation ?? 0})
+Latency: p50 ${dec.p50_elapsed_ms ?? "-"}ms, p95 ${dec.p95_elapsed_ms ?? "-"}ms
+Execution: ${exec.outcome} (succeeded: ${exec.succeeded}, failed: ${exec.failed}, started: ${exec.started}, cancelled: ${exec.cancelled}, rerouted: ${exec.rerouted}, not_started: ${exec.not_started})
+Plans: ${dashboardStats.plans.total} (${dashboardStats.plans.steps} steps)`);
+}
+
 async function serve(args: string[]): Promise<void> {
   const port = Number(option(args, "--port") ?? 8787);
   const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
@@ -279,6 +331,8 @@ Commands:
   plan --stdin | --request "..." [--candidates-file ./candidates.json] [--candidates JSON] [--steps 5] [--mode batch|serial]
        [--sequence argmax|beam] [--diversity-penalty 1.0] [--group-by server|type] [--decompose rule] [--thread-context]
        [--state-detail names|targets] [--provider demo|typesafe|openrouter]
+  feedback <decision-id> <event-type> [--details JSON] [--plan <plan-id>]
+  stats [--json]
   serve [--port 8787] [--provider demo|typesafe|openrouter]
   dashboard [--port 8788]  local read-only receipt dashboard (no Jev key required)
   serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
