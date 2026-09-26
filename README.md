@@ -220,6 +220,7 @@ When Jev selects a filtered candidate, the router can choose the highest-probabi
 - Missing permissions, unavailable capabilities and disallowed risk levels are hard filters.
 - An inline candidate (`{ name, description }`, no `id`) keeps any `risk`, `policy` and `permissions` it declares; only `verification`, `availability`, `execution` and `metadata` are decided by JevRouter, and supplying one of those prints a line on stderr naming it. An inline candidate that declares nothing is still `low` risk, as before.
 - API keys are read from environment variables and never written to manifests or decision files.
+- Configured endpoints (such as `JEV_API_URL`) require HTTPS; cleartext HTTP is rejected except on loopback (`localhost`, `127.0.0.1`, `[::1]`) to prevent token leakage.
 - Candidate provenance is separate from Jev probability; an unverified description can be visible for review without being treated as a verified host capability.
 - Decision files are append-only; setup and init add `.jevrouter/` to `.gitignore` to keep decision records from accidental commits.
 - CLI routes call the provider live with cache disabled; SDK caching is opt-in (`{cache: true}`).
