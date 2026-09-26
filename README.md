@@ -56,7 +56,7 @@ Node.js 20+ required. JevRouter accepts either the official Jev API or an OpenRo
 npx --yes github:BillionsBobby/JevRouter agent start --agent codex
 ```
 
-Choose `typesafe` for the official Jev API or `openrouter` at the prompt, then paste the corresponding key. The key stays in the current process environment and is never written to project files. For Claude Code use `--agent claude`, and for Cursor use `--agent cursor`. To install without launching a host, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` first and use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
+Choose `typesafe` for the official Jev API or `openrouter` at the prompt, then paste the corresponding key. The key stays in the current process environment and is never written to project files. For Claude Code use `--agent claude`, and for Cursor use `--agent cursor`. Setup automatically adds `.jevrouter/` to `.gitignore` to keep local decision receipts from being accidentally committed. To install without launching a host, export `TYPESAFE_API_KEY`, `JEV_API_KEY`, or `OPENROUTER_API_KEY` first and use `agent setup`; to verify later, use `agent doctor` (`--live` adds a small paid probe):
 
 ```bash
 npx --yes github:BillionsBobby/JevRouter agent setup          # Skill + project instructions only
@@ -221,7 +221,7 @@ When Jev selects a filtered candidate, the router can choose the highest-probabi
 - An inline candidate (`{ name, description }`, no `id`) keeps any `risk`, `policy` and `permissions` it declares; only `verification`, `availability`, `execution` and `metadata` are decided by JevRouter, and supplying one of those prints a line on stderr naming it. An inline candidate that declares nothing is still `low` risk, as before.
 - API keys are read from environment variables and never written to manifests or decision files.
 - Candidate provenance is separate from Jev probability; an unverified description can be visible for review without being treated as a verified host capability.
-- Decision files are append-only; rerunning a route creates a new decision ID.
+- Decision files are append-only; setup and init add `.jevrouter/` to `.gitignore` to keep decision records from accidental commits.
 - CLI routes call the provider live with cache disabled; SDK caching is opt-in (`{cache: true}`).
 
 ## Documentation

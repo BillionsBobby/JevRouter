@@ -27,8 +27,19 @@ The command performs a small live Jev connection check, installs a Skill and pro
 | `.cursor/mcp.json` | Optional Cursor MCP configuration (when `--with-mcp` is passed) |
 | Each Skill's `scripts/route.mjs` | Invokes the installed CLI in the project directory |
 | `.jevrouter/integration-v2.json` | Non-secret provider/key-name and launcher metadata |
+| `.gitignore` | Ensures `.jevrouter/` (decision/plan receipts and cache) is not committed |
 
 Existing project instruction bytes are backed up and preserved, with a routing block appended exactly once. Conflicting Skill/config files produce a separate proposal and an error; nothing is silently overwritten. Repeating an identical setup does not duplicate blocks. If the package install/cache moves or is removed, reinstall at a stable location and review the new proposed launcher.
+
+## Persistence and privacy boundary
+
+JevRouter persists routing and planning receipts locally:
+- `.jevrouter/decisions/*.json` — append-only records of individual routing decisions, including the request prompt, candidate tools/models, provider answers, and execution metadata.
+- `.jevrouter/plans/*.json` — multi-step plan receipts.
+- `.jevrouter/.cache/` — optional deterministic routing cache when enabled.
+- `.jevrouter/integration-v2.json` — metadata recording the provider and required API key environment variable name (the API key itself is **never** written to disk).
+
+Because decision and plan records contain raw prompts, context, and candidate schemas in plain text, `agent setup` (as well as `jevrouter init`) automatically ensures `.jevrouter/` is present in the project's `.gitignore`. This keeps decision logs local to the working environment and prevents sensitive task context from being accidentally committed via routine `git add .`.
 
 Legacy MCP configurations remain unchanged by default. The v2 rule uses CLI, so it also works when old MCP credentials are unavailable. It never writes `model_instructions_file` or replaces the host's base prompt.
 
