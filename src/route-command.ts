@@ -5,7 +5,7 @@ import { createProvider } from "./runtime.js";
 import { saveDecision, savePlan } from "./store.js";
 import type { CapabilityManifest, PlanMode, PlanStrategy, RouteInput } from "./types.js";
 
-export interface RouteCommandOptions { provider?: string; policy?: string; }
+export interface RouteCommandOptions { provider?: string; policy?: string; model?: string; }
 type Progress = (message: string) => void;
 
 interface CandidatesPayload {
@@ -32,7 +32,7 @@ export async function runRouteRequest(payload: unknown, root: string, options: R
   if (input.context !== undefined && (!input.context || typeof input.context !== "object" || Array.isArray(input.context))) throw new Error("context must be an object");
   if (input.actor_permissions !== undefined && (!Array.isArray(input.actor_permissions) || input.actor_permissions.some(x => typeof x !== "string"))) throw new Error("actor_permissions must be an array of strings");
   const candidates = await resolveCandidates(input, root, progress);
-  const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false });
+  const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false, model: options.model });
   const policy = await loadPolicyFile(options.policy ?? join(root, ".jevrouter/policy.json"));
   progress(`JevRouter START provider=${provider.name} candidates=${candidates.length}`);
   const started = performance.now();
@@ -80,7 +80,7 @@ export async function runPlanRequest(payload: unknown, root: string, options: Ro
   if (input.plan_hint !== undefined && (!Array.isArray(input.plan_hint) || input.plan_hint.some(x => typeof x !== "string"))) throw new Error("plan_hint must be an array of strings");
   const threadContext = input.thread_context === undefined ? undefined : Boolean(input.thread_context);
   const candidates = await resolveCandidates(input, root, progress);
-  const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false });
+  const provider = createProvider(options.provider ?? process.env.JEV_ROUTER_PROVIDER, { cache: false, model: options.model });
   const policy = await loadPolicyFile(options.policy ?? join(root, ".jevrouter/policy.json"));
   progress(`JevRouter START provider=${provider.name} candidates=${candidates.length} mode=${mode ?? (decompose ? "decompose" : "serial")} steps=${steps ?? 3}`);
   const started = performance.now();

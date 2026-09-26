@@ -102,7 +102,7 @@ async function route(args: string[]): Promise<void> {
     const context = option(args, "--context");
     payload = { request, candidates, input: input === undefined ? undefined : JSON.parse(input), context: context === undefined ? undefined : JSON.parse(context), actor: option(args, "--actor"), actor_permissions: option(args, "--actor-permissions")?.split(",").filter(Boolean) };
   }
-  const result = await runRouteRequest(payload, root, { provider: option(args, "--provider"), policy: option(args, "--policy") }, message => console.error(message));
+  const result = await runRouteRequest(payload, root, { provider: option(args, "--provider"), policy: option(args, "--policy"), model: option(args, "--model") }, message => console.error(message));
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.error ? 1 : result.status === "selected" ? 0 : 2;
 }
@@ -153,7 +153,7 @@ async function plan(args: string[]): Promise<void> {
       actor_permissions: option(args, "--actor-permissions")?.split(",").filter(Boolean),
     };
   }
-  const result = await runPlanRequest(payload, root, { provider: option(args, "--provider"), policy: option(args, "--policy") }, message => console.error(message));
+  const result = await runPlanRequest(payload, root, { provider: option(args, "--provider"), policy: option(args, "--policy"), model: option(args, "--model") }, message => console.error(message));
   console.log(JSON.stringify(result, null, 2));
   process.exitCode = result.steps.some((step: { error?: unknown }) => step.error) ? 1
     : result.steps.some((step: { status: string }) => step.status !== "selected") ? 2 : 0;
@@ -168,7 +168,7 @@ async function decision(args: string[]): Promise<void> {
 async function serve(args: string[]): Promise<void> {
   const port = Number(option(args, "--port") ?? 8787);
   const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
-  const provider = createProvider(option(args, "--provider"));
+  const provider = createProvider(option(args, "--provider"), { model: option(args, "--model") });
   const server = createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/health") return sendJson(response, 200, { ok: true, provider: provider.name });
@@ -199,7 +199,7 @@ async function dashboard(args: string[]): Promise<void> {
 
 async function serveMcp(args: string[]): Promise<void> {
   const policy = await loadPolicyFile(option(args, "--policy") ?? join(root, ".jevrouter", "policy.json"));
-  await startMcpServer({ registry, policy, provider: createProvider(option(args, "--provider")) });
+  await startMcpServer({ registry, policy, provider: createProvider(option(args, "--provider"), { model: option(args, "--model") }) });
 }
 
 async function agent(args: string[]): Promise<void> {
@@ -275,13 +275,13 @@ Commands:
   capability list
   discover [--skills <dir>] [--mcp <mcp.json>] [--cli git,docker] [--dsh <dir-or-file>]
   decision show <decision-id>
-  route --stdin | --request "..." [--candidates-file ./candidates.json] [--candidates JSON] [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter]
+  route --stdin | --request "..." [--candidates-file ./candidates.json] [--candidates JSON] [--input '{"query":"..."}'] [--actor-permissions read,write] [--provider demo|typesafe|openrouter] [--model <model>]
   plan --stdin | --request "..." [--candidates-file ./candidates.json] [--candidates JSON] [--steps 5] [--mode batch|serial]
        [--sequence argmax|beam] [--diversity-penalty 1.0] [--group-by server|type] [--decompose rule] [--thread-context]
-       [--state-detail names|targets] [--provider demo|typesafe|openrouter]
-  serve [--port 8787] [--provider demo|typesafe|openrouter]
+       [--state-detail names|targets] [--provider demo|typesafe|openrouter] [--model <model>]
+  serve [--port 8787] [--provider demo|typesafe|openrouter] [--model <model>]
   dashboard [--port 8788]  local read-only receipt dashboard (no Jev key required)
-  serve-mcp [--provider demo|typesafe|openrouter]  stdio MCP server for Agents
+  serve-mcp [--provider demo|typesafe|openrouter] [--model <model>]  stdio MCP server for Agents
   agent setup [--agent codex|claude|cursor|all] [--provider typesafe|openrouter] [--skip-check] [--with-mcp]
   agent start --agent codex|claude|cursor [--request "..."]  check Jev, install Skill, launch host
   agent doctor [--agent codex|claude|cursor|all] [--live]   configuration check; optional real Jev probe
@@ -290,6 +290,7 @@ Environment:
   TYPESAFE_API_KEY or JEV_API_KEY   official Jev API key
   OPENROUTER_API_KEY                OpenRouter Jev endpoint
   JEV_API_URL                        override the official endpoint
+  JEV_MODEL                          override the default model (e.g. jev-latest)
 `);
 }
 
