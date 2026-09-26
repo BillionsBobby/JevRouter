@@ -29,11 +29,29 @@ export const VALID_FEEDBACK_TRANSITIONS: Record<FeedbackEventType | "not_started
 const SENSITIVE_KEY_REGEX = /(?:^|[_-])(?:key|token|secret|password|passwd|auth(?:orization)?|bearer|credential)(?:[_-]|$)/i;
 const SENSITIVE_VALUE_REGEX = /(?:bearer\s+[a-zA-Z0-9_\-\.]+|sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{20,})/i;
 
-/** Validate that event details do not contain sensitive tokens or secret keys. */
+/** Validate that event details are a plain object and do not contain sensitive tokens or secret keys. */
 export function assertNoSecrets(value: unknown, path = "details"): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      `Execution feedback details must be a plain JSON object, received ${value === null ? "null" : Array.isArray(value) ? "array" : typeof value}`,
+    );
+  }
+  assertNoNestedSecrets(value, path);
+}
+
+function assertNoNestedSecrets(value: unknown, path: string): void {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    value.forEach((item, index) => assertNoSecrets(item, `${path}[${index}]`));
+    value.forEach((item, index) => {
+      if (typeof item === "string" && SENSITIVE_VALUE_REGEX.test(item)) {
+        throw new Error(
+          `Execution feedback details must not contain sensitive tokens or credentials (detected sensitive value at ${path}[${index}])`,
+        );
+      }
+      if (item && typeof item === "object") {
+        assertNoNestedSecrets(item, `${path}[${index}]`);
+      }
+    });
     return;
   }
   for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
@@ -44,7 +62,7 @@ export function assertNoSecrets(value: unknown, path = "details"): void {
       throw new Error(`Execution feedback details must not contain sensitive tokens or credentials (detected sensitive value at ${path}.${key})`);
     }
     if (val && typeof val === "object") {
-      assertNoSecrets(val, `${path}.${key}`);
+      assertNoNestedSecrets(val, `${path}.${key}`);
     }
   }
 }
@@ -114,7 +132,7 @@ export async function recordExecutionEvent(
     throw new Error(`Unknown event type "${params.type}". Allowed types: ${FEEDBACK_EVENT_TYPES.join(", ")}`);
   }
 
-  if (params.details) {
+  if (params.details !== undefined) {
     assertNoSecrets(params.details);
   }
 

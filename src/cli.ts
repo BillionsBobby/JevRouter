@@ -184,11 +184,16 @@ async function feedback(args: string[]): Promise<void> {
   const rawDetails = option(args, "--details");
   let details: Record<string, unknown> | undefined;
   if (rawDetails) {
+    let parsed: unknown;
     try {
-      details = JSON.parse(rawDetails) as Record<string, unknown>;
+      parsed = JSON.parse(rawDetails);
     } catch {
       throw new Error("--details must be valid JSON");
     }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("--details must be a JSON object");
+    }
+    details = parsed as Record<string, unknown>;
   }
   const planId = option(args, "--plan");
   const event = await recordExecutionEvent({
