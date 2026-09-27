@@ -60,12 +60,24 @@ export async function discoverCodexAgents(root: string, selectedNames?: string[]
       metadata: { source: "codex_agent_toml", path: relative(root, file) },
     });
   }
+  const sorted = result.sort((a, b) => a.name.localeCompare(b.name));
+  const ownersById = new Map<string, CapabilityManifest>();
+  for (const candidate of sorted) {
+    const owner = ownersById.get(candidate.id);
+    if (owner) {
+      throw new Error(
+        `Codex agent ID collision for "${candidate.id}": "${owner.name}" (${String(owner.metadata?.path)}) and "${candidate.name}" (${String(candidate.metadata?.path)}) normalize to the same ID`,
+      );
+    }
+    ownersById.set(candidate.id, candidate);
+  }
+
   if (selected) {
     const found = new Set(result.map((candidate) => candidate.name));
     const missing = [...selected].filter((name) => !found.has(name));
     if (missing.length > 0) throw new Error(`Codex agent profile not found: ${missing.join(", ")}`);
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name));
+  return sorted;
 }
 
 export async function discoverClis(commands: string[], timeoutMs = 3_000): Promise<CapabilityManifest[]> {
