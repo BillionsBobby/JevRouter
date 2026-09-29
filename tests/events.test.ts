@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
+  assertDecisionExists,
   assertNoSecrets,
   FEEDBACK_EVENT_TYPES,
   getExecutionEventsForDecision,
   readExecutionEvents,
   recordExecutionEvent,
   resolveDecisionExecutionState,
+  validateSafeId,
   VALID_FEEDBACK_TRANSITIONS,
 } from "../src/events.js";
 import { collectDashboardStats } from "../src/dashboard.js";
@@ -162,22 +164,42 @@ test("supports failure, cancellation, and rerouting transitions", async () => {
 });
 
 test("assertNoSecrets rejects sensitive keys and secret values", () => {
-  // Sensitive keys
+  // Sensitive keys (snake_case and camelCase)
   assert.throws(
     () => assertNoSecrets({ api_key: "abc" }),
     /rejected key: "api_key"/,
+  );
+  assert.throws(
+    () => assertNoSecrets({ apiKey: "abc" }),
+    /rejected key: "apiKey"/,
   );
   assert.throws(
     () => assertNoSecrets({ auth_token: "xyz" }),
     /rejected key: "auth_token"/,
   );
   assert.throws(
+    () => assertNoSecrets({ accessToken: "xyz" }),
+    /rejected key: "accessToken"/,
+  );
+  assert.throws(
     () => assertNoSecrets({ nested: { password: "123" } }),
     /rejected key: "password"/,
   );
   assert.throws(
+    () => assertNoSecrets({ nested: { userPassword: "123" } }),
+    /rejected key: "userPassword"/,
+  );
+  assert.throws(
     () => assertNoSecrets({ client_secret: "shhh" }),
     /rejected key: "client_secret"/,
+  );
+  assert.throws(
+    () => assertNoSecrets({ clientSecret: "shhh" }),
+    /rejected key: "clientSecret"/,
+  );
+  assert.throws(
+    () => assertNoSecrets({ credentials: "secret" }),
+    /rejected key: "credentials"/,
   );
 
   // Sensitive values
@@ -376,6 +398,112 @@ test("CLI feedback and stats commands record events and return deterministic agg
     );
     assert.equal(numberFb.status, 1);
     assert.match(numberFb.stderr, /--details must be a JSON object/);
+    // 5. Run feedback with camelCase secret details -> fails with exitCode 1
+    const camelBadFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", '{"apiKey":"secret"}'],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(camelBadFb.status, 1);
+    assert.match(camelBadFb.stderr, /sensitive keys or tokens/);
+
+    const tokenBadFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", '{"accessToken":"secret"}'],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(tokenBadFb.status, 1);
+    assert.match(tokenBadFb.stderr, /sensitive keys or tokens/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects path traversal in decision_id and plan_id even if target file exists outside decisions dir", async () => {
+  const root = await createFixture();
+  try {
+    // Create .jevrouter/outside.json
+    await writeFile(
+      join(root, ".jevrouter", "outside.json"),
+      JSON.stringify({ decision_id: "outside" }),
+      "utf8",
+    );
+
+    // Reject ../outside in recordExecutionEvent
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "../outside", type: "execution_started" }, root),
+      /path traversal detected/,
+    );
+
+    // Reject ../outside in assertDecisionExists
+    await assert.rejects(
+      () => assertDecisionExists("../outside", root),
+      /path traversal detected/,
+    );
+
+    // Reject path traversal with subdirectories or slashes
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "foo/bar", type: "execution_started" }, root),
+      /path traversal detected/,
+    );
+
+    // Reject path traversal in plan_id
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", plan_id: "../evil_plan", type: "execution_started" },
+          root,
+        ),
+      /path traversal detected/,
+    );
+
+    // Validate CLI rejects path traversal
+    const cli = resolve("dist/cli.js");
+    const cliResult = spawnSync(
+      process.execPath,
+      [cli, "feedback", "../outside", "execution_started"],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(cliResult.status, 1);
+    assert.match(cliResult.stderr, /path traversal detected/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("serializes concurrent execution feedback transitions for the same decision", async () => {
+  const root = await createFixture();
+  try {
+    const decId = "dec_12345";
+
+    // Launch two concurrent execution_started calls for the same decision
+    const [res1, res2] = await Promise.allSettled([
+      recordExecutionEvent({ decision_id: decId, type: "execution_started" }, root),
+      recordExecutionEvent({ decision_id: decId, type: "execution_started" }, root),
+    ]);
+
+    // Exactly one must succeed and one must fail with invalid transition error
+    const fulfilled = [res1, res2].filter((r) => r.status === "fulfilled");
+    const rejected = [res1, res2].filter((r) => r.status === "rejected");
+
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.match(
+      (rejected[0] as PromiseRejectedResult).reason?.message,
+      /Invalid event transition: cannot transition from "execution_started" to "execution_started"/,
+    );
+
+    // Verify only one event was written to the events file
+    const events = await getExecutionEventsForDecision(decId, root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "execution_started");
+
+    // Subsequent valid transition succeeds
+    const succeeded = await recordExecutionEvent({ decision_id: decId, type: "execution_succeeded" }, root);
+    assert.equal(succeeded.type, "execution_succeeded");
+
+    const updatedEvents = await getExecutionEventsForDecision(decId, root);
+    assert.equal(updatedEvents.length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

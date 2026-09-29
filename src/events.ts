@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { FeedbackEventEnvelope, FeedbackEventType } from "./types.js";
 import { requestId } from "./utils.js";
 
@@ -26,7 +26,21 @@ export const VALID_FEEDBACK_TRANSITIONS: Record<FeedbackEventType | "not_started
   task_completed: [],
 };
 
-const SENSITIVE_KEY_REGEX = /(?:^|[_-])(?:key|token|secret|password|passwd|auth(?:orization)?|bearer|credential)(?:[_-]|$)/i;
+export const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+export function validateSafeId(id: string, fieldName = "decision ID"): void {
+  if (typeof id !== "string" || id.trim() === "") {
+    throw new Error(`Invalid ${fieldName}: must be a non-empty string`);
+  }
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${fieldName}: path traversal detected for "${id}"`);
+  }
+  if (!SAFE_ID_REGEX.test(id)) {
+    throw new Error(`Invalid ${fieldName} format: "${id}". Must contain only alphanumeric characters, underscores, or dashes.`);
+  }
+}
+
+const SENSITIVE_KEY_REGEX = /(?:key|token|secret|password|passwd|auth|bearer|credential)/i;
 const SENSITIVE_VALUE_REGEX = /(?:bearer\s+[a-zA-Z0-9_\-\.]+|sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{20,})/i;
 
 /** Validate that event details are a plain object and do not contain sensitive tokens or secret keys. */
@@ -69,7 +83,14 @@ function assertNoNestedSecrets(value: unknown, path: string): void {
 
 /** Check if a decision ID exists in .jevrouter/decisions or as part of a plan in .jevrouter/plans. */
 export async function assertDecisionExists(decisionId: string, root = process.cwd()): Promise<void> {
-  const decisionPath = join(root, ".jevrouter", "decisions", `${decisionId}.json`);
+  validateSafeId(decisionId, "decision ID");
+
+  const decisionsDir = resolve(root, ".jevrouter", "decisions");
+  const decisionPath = resolve(decisionsDir, `${decisionId}.json`);
+  if (!decisionPath.startsWith(decisionsDir + (decisionsDir.endsWith(sep) ? "" : sep))) {
+    throw new Error(`Invalid decision ID: path traversal detected for "${decisionId}"`);
+  }
+
   try {
     await stat(decisionPath);
     return;
@@ -120,6 +141,27 @@ export interface RecordExecutionEventOptions {
   event_id?: string;
 }
 
+const decisionQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * Serialize asynchronous operations per decision to prevent race conditions
+ * when checking and appending event transitions.
+ */
+export function withDecisionLock<T>(lockKey: string, fn: () => Promise<T>): Promise<T> {
+  const previous = decisionQueues.get(lockKey) ?? Promise.resolve();
+  const next = (async () => {
+    await previous.catch(() => {});
+    return await fn();
+  })();
+
+  decisionQueues.set(lockKey, next);
+  return next.finally(() => {
+    if (decisionQueues.get(lockKey) === next) {
+      decisionQueues.delete(lockKey);
+    }
+  });
+}
+
 /**
  * Record an append-only execution feedback event into .jevrouter/events/events.jsonl.
  * Validates decision existence, state transitions, and secret-free details.
@@ -132,36 +174,47 @@ export async function recordExecutionEvent(
     throw new Error(`Unknown event type "${params.type}". Allowed types: ${FEEDBACK_EVENT_TYPES.join(", ")}`);
   }
 
+  validateSafeId(params.decision_id, "decision ID");
+  if (params.plan_id !== undefined) {
+    validateSafeId(params.plan_id, "plan ID");
+  }
+  if (params.event_id !== undefined) {
+    validateSafeId(params.event_id, "event ID");
+  }
+
   if (params.details !== undefined) {
     assertNoSecrets(params.details);
   }
 
-  await assertDecisionExists(params.decision_id, root);
+  const lockKey = `${resolve(root)}:${params.decision_id}`;
+  return withDecisionLock(lockKey, async () => {
+    await assertDecisionExists(params.decision_id, root);
 
-  const existingEvents = await getExecutionEventsForDecision(params.decision_id, root);
-  const currentState = resolveDecisionExecutionState(existingEvents);
+    const existingEvents = await getExecutionEventsForDecision(params.decision_id, root);
+    const currentState = resolveDecisionExecutionState(existingEvents);
 
-  const allowedTransitions = VALID_FEEDBACK_TRANSITIONS[currentState];
-  if (!allowedTransitions.includes(params.type)) {
-    throw new Error(
-      `Invalid event transition: cannot transition from "${currentState}" to "${params.type}" for decision "${params.decision_id}"`,
-    );
-  }
+    const allowedTransitions = VALID_FEEDBACK_TRANSITIONS[currentState];
+    if (!allowedTransitions.includes(params.type)) {
+      throw new Error(
+        `Invalid event transition: cannot transition from "${currentState}" to "${params.type}" for decision "${params.decision_id}"`,
+      );
+    }
 
-  const envelope: FeedbackEventEnvelope = {
-    event_id: params.event_id ?? requestId("evt"),
-    decision_id: params.decision_id,
-    ...(params.plan_id ? { plan_id: params.plan_id } : {}),
-    type: params.type,
-    timestamp: params.timestamp ?? new Date().toISOString(),
-    ...(params.details ? { details: params.details } : {}),
-  };
+    const envelope: FeedbackEventEnvelope = {
+      event_id: params.event_id ?? requestId("evt"),
+      decision_id: params.decision_id,
+      ...(params.plan_id ? { plan_id: params.plan_id } : {}),
+      type: params.type,
+      timestamp: params.timestamp ?? new Date().toISOString(),
+      ...(params.details ? { details: params.details } : {}),
+    };
 
-  const eventsDir = join(root, ".jevrouter", "events");
-  await mkdir(eventsDir, { recursive: true });
-  await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
+    const eventsDir = join(root, ".jevrouter", "events");
+    await mkdir(eventsDir, { recursive: true });
+    await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
 
-  return envelope;
+    return envelope;
+  });
 }
 
 /** Read all execution feedback events from .jevrouter/events/*.jsonl. */
@@ -205,6 +258,7 @@ export async function getExecutionEventsForDecision(
   decisionId: string,
   root = process.cwd(),
 ): Promise<FeedbackEventEnvelope[]> {
+  validateSafeId(decisionId, "decision ID");
   const all = await readExecutionEvents(root);
   return all.filter((e) => e.decision_id === decisionId);
 }
