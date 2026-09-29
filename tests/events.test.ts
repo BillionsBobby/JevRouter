@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import {
   assertDecisionExists,
   assertNoSecrets,
@@ -504,6 +505,72 @@ test("serializes concurrent execution feedback transitions for the same decision
 
     const updatedEvents = await getExecutionEventsForDecision(decId, root);
     assert.equal(updatedEvents.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("serializes feedback transitions across processes", async () => {
+  const root = await createFixture();
+  const eventsUrl = pathToFileURL(resolve("dist/events.js")).href;
+  const childCode = `process.send('ready'); process.on('message', async () => {
+    const { recordExecutionEvent } = await import(${JSON.stringify(eventsUrl)});
+    try { await recordExecutionEvent({ decision_id: 'dec_12345', type: 'execution_started' }, ${JSON.stringify(root)}); process.exit(0); }
+    catch { process.exit(1); }
+  });`;
+  try {
+    const children = Array.from({ length: 8 }, () => spawn(process.execPath, ["-e", childCode], { stdio: ["ignore", "ignore", "ignore", "ipc"] }));
+    await Promise.all(children.map(child => new Promise<void>(done => child.once("message", () => done()))));
+    const exits = children.map(child => new Promise<number | null>(done => child.once("exit", done)));
+    children.forEach(child => child.send("start"));
+    assert.deepEqual((await Promise.all(exits)).sort(), [0, 1, 1, 1, 1, 1, 1, 1]);
+    assert.equal((await getExecutionEventsForDecision("dec_12345", root)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovers a writer lock left by a dead process", async () => {
+  const root = await createFixture();
+  try {
+    const lockDir = join(root, ".jevrouter/events/.write-lock");
+    await mkdir(lockDir);
+    await writeFile(join(lockDir, "pid"), "2147483647");
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+    assert.equal((await getExecutionEventsForDecision("dec_12345", root)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("validates the exact details snapshot saved to JSONL", async () => {
+  const root = await createFixture();
+  try {
+    const details: Record<string, unknown> = { message: "safe" };
+    const pending = recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started", details }, root);
+    details.api_key = "synthetic-secret";
+    const event = await pending;
+    assert.deepEqual(event.details, { message: "safe" });
+    assert.deepEqual((await getExecutionEventsForDecision("dec_12345", root))[0].details, { message: "safe" });
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "dec_12345", type: "execution_succeeded", details: {
+        toJSON: () => ({ api_key: "synthetic-secret" }),
+      } }, root),
+      /sensitive keys or tokens/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("replays events from multiple files in timestamp order", async () => {
+  const root = await createFixture();
+  try {
+    const event = (type: string, timestamp: string) => JSON.stringify({ event_id: type, decision_id: "dec_12345", type, timestamp }) + "\n";
+    await writeFile(join(root, ".jevrouter/events/z-old.jsonl"), event("execution_started", "2026-09-29T10:00:00Z"));
+    await writeFile(join(root, ".jevrouter/events/a-new.jsonl"), event("execution_succeeded", "2026-09-29T10:01:00Z") + event("task_completed", "2026-09-29T10:02:00Z"));
+    assert.equal(resolveDecisionExecutionState(await getExecutionEventsForDecision("dec_12345", root)), "task_completed");
+    assert.equal((await collectDashboardStats(root)).execution.succeeded, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

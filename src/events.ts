@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { FeedbackEventEnvelope, FeedbackEventType } from "./types.js";
 import { requestId } from "./utils.js";
@@ -143,6 +143,64 @@ export interface RecordExecutionEventOptions {
 
 const decisionQueues = new Map<string, Promise<unknown>>();
 
+async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Promise<T> {
+  const lockDir = join(eventsDir, ".write-lock");
+  const ownerPath = join(lockDir, "pid");
+  const recoveryDir = join(eventsDir, ".write-lock-recovery");
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      await mkdir(lockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (await isAbandonedLock(lockDir, ownerPath)) {
+      try {
+        await mkdir(recoveryDir);
+        try {
+          if (await isAbandonedLock(lockDir, ownerPath)) await rm(lockDir, { recursive: true, force: true });
+        } finally {
+          await rm(recoveryDir, { recursive: true, force: true });
+        }
+        continue;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for execution feedback writer");
+    await new Promise(resolveWait => setTimeout(resolveWait, 20));
+  }
+  try {
+    await writeFile(ownerPath, String(process.pid));
+    return await fn();
+  } finally {
+    await rm(lockDir, { recursive: true, force: true });
+  }
+}
+
+async function isAbandonedLock(lockDir: string, ownerPath: string): Promise<boolean> {
+  try {
+    const owner = Number(await readFile(ownerPath, "utf8"));
+    if (Number.isInteger(owner) && owner > 0) {
+      try {
+        process.kill(owner, 0);
+        return false;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ESRCH";
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    return Date.now() - (await stat(lockDir)).mtimeMs > 30_000;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 /**
  * Serialize asynchronous operations per decision to prevent race conditions
  * when checking and appending event transitions.
@@ -182,38 +240,33 @@ export async function recordExecutionEvent(
     validateSafeId(params.event_id, "event ID");
   }
 
-  if (params.details !== undefined) {
-    assertNoSecrets(params.details);
-  }
+  const details = params.details === undefined ? undefined : JSON.parse(JSON.stringify(params.details)) as unknown;
+  if (details !== undefined) assertNoSecrets(details);
 
   const lockKey = `${resolve(root)}:${params.decision_id}`;
   return withDecisionLock(lockKey, async () => {
-    await assertDecisionExists(params.decision_id, root);
-
-    const existingEvents = await getExecutionEventsForDecision(params.decision_id, root);
-    const currentState = resolveDecisionExecutionState(existingEvents);
-
-    const allowedTransitions = VALID_FEEDBACK_TRANSITIONS[currentState];
-    if (!allowedTransitions.includes(params.type)) {
-      throw new Error(
-        `Invalid event transition: cannot transition from "${currentState}" to "${params.type}" for decision "${params.decision_id}"`,
-      );
-    }
-
-    const envelope: FeedbackEventEnvelope = {
-      event_id: params.event_id ?? requestId("evt"),
-      decision_id: params.decision_id,
-      ...(params.plan_id ? { plan_id: params.plan_id } : {}),
-      type: params.type,
-      timestamp: params.timestamp ?? new Date().toISOString(),
-      ...(params.details ? { details: params.details } : {}),
-    };
-
     const eventsDir = join(root, ".jevrouter", "events");
     await mkdir(eventsDir, { recursive: true });
-    await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
+    return withEventFileLock(eventsDir, async () => {
+      await assertDecisionExists(params.decision_id, root);
+      const currentState = resolveDecisionExecutionState(await getExecutionEventsForDecision(params.decision_id, root));
+      if (!VALID_FEEDBACK_TRANSITIONS[currentState].includes(params.type)) {
+        throw new Error(
+          `Invalid event transition: cannot transition from "${currentState}" to "${params.type}" for decision "${params.decision_id}"`,
+        );
+      }
 
-    return envelope;
+      const envelope: FeedbackEventEnvelope = {
+        event_id: params.event_id ?? requestId("evt"),
+        decision_id: params.decision_id,
+        ...(params.plan_id ? { plan_id: params.plan_id } : {}),
+        type: params.type,
+        timestamp: params.timestamp ?? new Date().toISOString(),
+        ...(details !== undefined ? { details: details as Record<string, unknown> } : {}),
+      };
+      await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
+      return envelope;
+    });
   });
 }
 
@@ -250,7 +303,13 @@ export async function readExecutionEvents(root = process.cwd()): Promise<Feedbac
     }
   }
 
-  return events;
+  return events.sort((a, b) => {
+    const left = Date.parse(a.timestamp);
+    const right = Date.parse(b.timestamp);
+    const leftTime = Number.isFinite(left) ? left : Infinity;
+    const rightTime = Number.isFinite(right) ? right : Infinity;
+    return leftTime === rightTime ? 0 : leftTime - rightTime;
+  });
 }
 
 /** Get all feedback events for a specific decision_id in chronological order. */
