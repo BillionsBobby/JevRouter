@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { parse as parseToml } from "smol-toml";
 import { parse } from "yaml";
 import type { CapabilityManifest } from "./types.js";
 
@@ -43,15 +44,24 @@ export async function discoverCodexAgents(root: string, selectedNames?: string[]
   const result: CapabilityManifest[] = [];
   for (const file of files) {
     const source = await readFile(file, "utf8");
-    const name = tomlString(source, "name");
-    const description = tomlString(source, "description");
-    if (!name || !description || (selected && !selected.has(name))) continue;
+    let profile: Record<string, unknown>;
+    try {
+      profile = parseToml(source);
+    } catch {
+      // Ignore malformed TOML; it cannot be a loadable Codex profile.
+      continue;
+    }
+    const { name, description, developer_instructions: instructions } = profile;
+    if (typeof name !== "string" || !name.trim()
+      || typeof description !== "string" || !description.trim()
+      || typeof instructions !== "string" || !instructions.trim()
+      || (selected && !selected.has(name))) continue;
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     result.push({
       id: `codex_agent.${slug}`,
       name,
       type: "subagent",
-      description,
+      description: description.trim(),
       verification: { status: "discovered", source: "codex_agent_toml" },
       permissions: [],
       risk: { level: "low", categories: ["codex_subagent"] },
@@ -168,15 +178,4 @@ function firstParagraph(source: string): string | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function tomlString(source: string, key: string): string | null {
-  const match = source.match(new RegExp(`^${key}\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|'([^']*)')\\s*(?:#.*)?$`, "m"));
-  if (!match) return null;
-  if (match[2] !== undefined) return match[2].trim();
-  try {
-    return JSON.parse(`"${match[1]}"`).trim();
-  } catch {
-    return null;
-  }
 }
