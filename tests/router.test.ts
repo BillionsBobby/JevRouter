@@ -206,6 +206,22 @@ test("exposes the same router through the optional MCP adapter", async () => {
   assert.equal((called?.result as { structuredContent: { decision: { selected: string } } }).structuredContent.decision.selected, "subagent.researcher");
 });
 
+test("jev_capabilities answers with structuredContent as an object", async () => {
+  const provider = new FixedProvider({
+    answers: { tool: { type: "choice", choice: "subagent.researcher", probabilities: { "subagent.researcher": 1 }, confidence: 1 } },
+  });
+  const options = { registry: new CapabilityRegistry(".jevrouter/capabilities"), policy: defaultPolicy, provider };
+  const called = await handleMessage({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "jev_capabilities", arguments: {} },
+  }, options);
+  const structured = (called?.result as { structuredContent: unknown }).structuredContent;
+  assert.ok(!Array.isArray(structured), "MCP requires structuredContent to be an object, not an array");
+  assert.deepEqual(Object.keys(structured as object), ["capabilities"]);
+});
+
 test("accepts an OpenAI-style function tool without a manifest conversion step", async () => {
   const result = await sdkRoute(
     {

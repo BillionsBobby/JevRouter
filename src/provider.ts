@@ -62,14 +62,45 @@ export interface HttpJevProviderOptions {
   timeoutMs?: number;
 }
 
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === "localhost" || host === "::1" || host === "[::1]") {
+    return true;
+  }
+  // IPv4 loopback: 127.0.0.0/8 (127.0.0.1 - 127.255.255.255)
+  if (/^127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}$/.test(host)) {
+    return true;
+  }
+  return false;
+}
+
+export function validateEndpoint(endpoint: string): string {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error(`Invalid Jev endpoint URL: "${endpoint}". Endpoints must be valid HTTPS URLs or HTTP on loopback.`);
+  }
+
+  if (url.protocol === "https:") {
+    return endpoint;
+  }
+
+  if (url.protocol === "http:" && isLoopbackHost(url.hostname)) {
+    return endpoint;
+  }
+
+  throw new Error(`Insecure Jev endpoint rejected: "${endpoint}". Configured endpoints must use HTTPS to safeguard credentials, unless connecting to loopback (localhost, 127.0.0.1, [::1]).`);
+}
+
 export class HttpJevProvider implements JevProvider {
   readonly name = "typesafe";
+  readonly model: string;
   private readonly endpoint: string;
-  private readonly model: string;
   private readonly timeoutMs: number;
 
   constructor(private readonly options: HttpJevProviderOptions) {
-    this.endpoint = options.endpoint ?? "https://api.typesafe.ai/v1/systemone";
+    this.endpoint = validateEndpoint(options.endpoint ?? "https://api.typesafe.ai/v1/systemone");
     this.model = options.model ?? "jev-latest";
     this.timeoutMs = options.timeoutMs ?? 15_000;
   }
@@ -110,12 +141,16 @@ export class HttpJevProvider implements JevProvider {
 /** OpenRouter's native Decisions adapter. It uses the same typed request/response
  * shape as TypeSafe's endpoint, but through OpenRouter's alpha decisions route. */
 export class OpenRouterJevProvider implements JevProvider {
-  readonly name = "openrouter:~typesafe/jev-latest";
+  readonly name: string;
+  readonly model: string;
   constructor(
     private readonly apiKey: string,
-    private readonly model = "~typesafe/jev-latest",
+    model = "~typesafe/jev-latest",
     private readonly timeoutMs = 20_000,
-  ) {}
+  ) {
+    this.model = model;
+    this.name = `openrouter:${model}`;
+  }
 
   async decide(request: JevRouteRequest): Promise<JevRawResponse> {
     const response = await fetch("https://openrouter.ai/api/alpha/decisions", {
@@ -128,7 +163,7 @@ export class OpenRouterJevProvider implements JevProvider {
       },
       body: JSON.stringify({
         state: request.state,
-        model: this.model,
+        model: request.model ?? this.model,
         questions: buildQuestions(request),
       }),
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -161,8 +196,19 @@ export class CachedJevProvider implements JevProvider {
     this.name = inner.name;
   }
 
+  get model(): string | undefined {
+    return this.inner.model;
+  }
+
   async decide(request: JevRouteRequest): Promise<JevRawResponse> {
-    const key = sha256({ provider: this.inner.name, state: request.state, candidates: request.candidates, questions: request.questions ?? null });
+    const effectiveModel = request.model ?? this.inner.model ?? null;
+    const key = sha256({
+      provider: this.inner.name,
+      model: effectiveModel,
+      state: request.state,
+      candidates: request.candidates,
+      questions: request.questions ?? null,
+    });
     const path = join(this.directory, `${key.slice("sha256:".length)}.json`);
     try {
       return JSON.parse(await readFile(path, "utf8")) as JevRawResponse;
@@ -183,6 +229,7 @@ export class CachedJevProvider implements JevProvider {
 /** Offline provider for local demos. It is intentionally labelled and must not be treated as Jev. */
 export class DemoProvider implements JevProvider {
   readonly name = "jevrouter-demo";
+  readonly model = "jevrouter-demo";
 
   async decide(request: JevRouteRequest): Promise<JevRawResponse> {
     const requestTokens = tokenize(stateToText(request.state));

@@ -141,6 +141,7 @@ export interface JevRouteRequest {
 
 export interface JevProvider {
   readonly name: string;
+  readonly model?: string;
   decide(request: JevRouteRequest): Promise<JevRawResponse>;
 }
 

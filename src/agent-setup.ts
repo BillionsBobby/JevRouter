@@ -101,6 +101,7 @@ export async function setupAgents(target: AgentTarget = "all", root = process.cw
   await lstat(cliPath); // Reject source-only installs before writing host config.
   const integration: Integration = { version: 2, provider: selected.provider, key: selected.key, cli: cliPath, with_mcp: options.withMcp === true };
   await writeNewOrSame(integrationPath(root), JSON.stringify(integration, null, 2) + "\n");
+  await ensureGitIgnore(root);
   const results: AgentSetupResult[] = [];
   for (const agent of targets) {
     const directory = skillDirectory(agent, root);
@@ -202,4 +203,26 @@ async function writeNewOrSame(path: string, text: string): Promise<void> {
     throw new Error(`Existing file preserved: ${path}. Review the proposed configuration: ${proposal}`);
   }
   await writeFile(path, text, { flag: "wx", mode: 0o600 });
+}
+
+export async function ensureGitIgnore(root: string): Promise<boolean> {
+  const gitignorePath = join(root, ".gitignore");
+  const content = await readOptional(gitignorePath);
+  if (content !== null) {
+    const lines = content.split(/\r?\n/).map(line => line.trim());
+    const alreadyIgnored = lines.some(line =>
+      line === ".jevrouter" ||
+      line === ".jevrouter/" ||
+      line === "/.jevrouter" ||
+      line === "/.jevrouter/" ||
+      line === ".jevrouter/*" ||
+      line === "/.jevrouter/*"
+    );
+    if (alreadyIgnored) return false;
+    const prefix = content.length === 0 || content.endsWith("\n") ? "" : "\n";
+    await appendFile(gitignorePath, `${prefix}.jevrouter/\n`);
+    return true;
+  }
+  await writeNewOrSame(gitignorePath, ".jevrouter/\n");
+  return true;
 }
