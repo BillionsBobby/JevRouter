@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -14,6 +14,7 @@ import {
   recordExecutionEvent,
   resolveDecisionExecutionState,
   validateSafeId,
+  validateTimestamp,
   VALID_FEEDBACK_TRANSITIONS,
 } from "../src/events.js";
 import { collectDashboardStats } from "../src/dashboard.js";
@@ -571,6 +572,143 @@ test("replays events from multiple files in timestamp order", async () => {
     await writeFile(join(root, ".jevrouter/events/a-new.jsonl"), event("execution_succeeded", "2026-09-29T10:01:00Z") + event("task_completed", "2026-09-29T10:02:00Z"));
     assert.equal(resolveDecisionExecutionState(await getExecutionEventsForDecision("dec_12345", root)), "task_completed");
     assert.equal((await collectDashboardStats(root)).execution.succeeded, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects invalid and malformed event timestamps", async () => {
+  const root = await createFixture();
+  try {
+    assert.throws(() => validateTimestamp(""), /Invalid timestamp/);
+    assert.throws(() => validateTimestamp("not-a-date"), /Invalid timestamp/);
+    assert.throws(() => validateTimestamp("invalid-iso"), /Invalid timestamp/);
+    assert.throws(() => validateTimestamp(null as unknown as string), /Invalid timestamp/);
+
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started", timestamp: "invalid" }, root),
+      /Invalid timestamp/,
+    );
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started", timestamp: "" }, root),
+      /Invalid timestamp/,
+    );
+    await assert.rejects(
+      () => recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started", timestamp: "not-a-date" }, root),
+      /Invalid timestamp/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects backdated event timestamps for a decision and maintains chronological state", async () => {
+  const root = await createFixture();
+  try {
+    // 1. Record execution_started at 10:00
+    await recordExecutionEvent(
+      { decision_id: "dec_12345", type: "execution_started", timestamp: "2026-10-02T10:00:00.000Z" },
+      root,
+    );
+
+    // 2. Attempt backdated execution_succeeded at 09:00 -> must be rejected
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_succeeded", timestamp: "2026-10-02T09:00:00.000Z" },
+          root,
+        ),
+      /cannot be earlier than previous event "execution_started" timestamp/,
+    );
+
+    // 3. Verify state and dashboard remain "started" rather than corrupted
+    const eventsAfterReject = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(eventsAfterReject.length, 1);
+    assert.equal(resolveDecisionExecutionState(eventsAfterReject), "execution_started");
+    const statsAfterReject = await collectDashboardStats(root);
+    assert.equal(statsAfterReject.execution.started, 1);
+    assert.equal(statsAfterReject.execution.succeeded, 0);
+
+    // 4. Subsequent forward timestamp succeeds
+    await recordExecutionEvent(
+      { decision_id: "dec_12345", type: "execution_succeeded", timestamp: "2026-10-02T10:05:00.000Z" },
+      root,
+    );
+
+    // 5. Subsequent equal timestamp succeeds
+    await recordExecutionEvent(
+      { decision_id: "dec_12345", type: "task_completed", timestamp: "2026-10-02T10:05:00.000Z" },
+      root,
+    );
+
+    const finalEvents = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(finalEvents.length, 3);
+    assert.equal(resolveDecisionExecutionState(finalEvents), "task_completed");
+    const finalStats = await collectDashboardStats(root);
+    assert.equal(finalStats.execution.succeeded, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovers when recovery directory was left abandoned by a crashed process", async () => {
+  const root = await createFixture();
+  try {
+    const lockDir = join(root, ".jevrouter/events/.write-lock");
+    const recoveryDir = join(root, ".jevrouter/events/.write-lock-recovery");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(join(lockDir, "pid"), "2147483647");
+    await mkdir(recoveryDir, { recursive: true });
+    await writeFile(join(recoveryDir, "pid"), "2147483647");
+
+    // Must recover promptly without 30-second timeout
+    const event = await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+    assert.equal(event.type, "execution_started");
+    assert.equal((await getExecutionEventsForDecision("dec_12345", root)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovers when recovery directory has no pid file but is stale", async () => {
+  const root = await createFixture();
+  try {
+    const lockDir = join(root, ".jevrouter/events/.write-lock");
+    const recoveryDir = join(root, ".jevrouter/events/.write-lock-recovery");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(join(lockDir, "pid"), "2147483647");
+    await mkdir(recoveryDir, { recursive: true });
+
+    // Set recoveryDir mtime to 5 seconds ago
+    const past = (Date.now() - 5000) / 1000;
+    await utimes(recoveryDir, past, past);
+
+    const event = await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+    assert.equal(event.type, "execution_started");
+    assert.equal((await getExecutionEventsForDecision("dec_12345", root)).length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("replays events with identical timestamps in authoritative ingestion order", async () => {
+  const root = await createFixture();
+  try {
+    const ts = "2026-10-02T12:00:00.000Z";
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "handoff_accepted", timestamp: ts }, root);
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started", timestamp: ts }, root);
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_succeeded", timestamp: ts }, root);
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "task_completed", timestamp: ts }, root);
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 4);
+    assert.deepEqual(events.map((e) => e.type), [
+      "handoff_accepted",
+      "execution_started",
+      "execution_succeeded",
+      "task_completed",
+    ]);
+    assert.equal(resolveDecisionExecutionState(events), "task_completed");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

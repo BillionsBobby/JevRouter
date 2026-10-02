@@ -141,12 +141,24 @@ export interface RecordExecutionEventOptions {
   event_id?: string;
 }
 
+export function validateTimestamp(timestamp: string): number {
+  if (typeof timestamp !== "string" || timestamp.trim() === "") {
+    throw new Error(`Invalid timestamp: "${timestamp}". Expected a valid ISO-8601 date string.`);
+  }
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
+    throw new Error(`Invalid timestamp: "${timestamp}". Expected a valid ISO-8601 date string.`);
+  }
+  return parsed;
+}
+
 const decisionQueues = new Map<string, Promise<unknown>>();
 
 async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Promise<T> {
   const lockDir = join(eventsDir, ".write-lock");
   const ownerPath = join(lockDir, "pid");
   const recoveryDir = join(eventsDir, ".write-lock-recovery");
+  const recoveryOwnerPath = join(recoveryDir, "pid");
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {
@@ -156,9 +168,17 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     if (await isAbandonedLock(lockDir, ownerPath)) {
+      if (await isAbandonedLock(recoveryDir, recoveryOwnerPath, 1000)) {
+        try {
+          await rm(recoveryDir, { recursive: true, force: true });
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
       try {
         await mkdir(recoveryDir);
         try {
+          await writeFile(recoveryOwnerPath, String(process.pid));
           if (await isAbandonedLock(lockDir, ownerPath)) await rm(lockDir, { recursive: true, force: true });
         } finally {
           await rm(recoveryDir, { recursive: true, force: true });
@@ -179,7 +199,7 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
   }
 }
 
-async function isAbandonedLock(lockDir: string, ownerPath: string): Promise<boolean> {
+async function isAbandonedLock(lockDir: string, ownerPath: string, timeoutMs = 30_000): Promise<boolean> {
   try {
     const owner = Number(await readFile(ownerPath, "utf8"));
     if (Number.isInteger(owner) && owner > 0) {
@@ -194,7 +214,7 @@ async function isAbandonedLock(lockDir: string, ownerPath: string): Promise<bool
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   try {
-    return Date.now() - (await stat(lockDir)).mtimeMs > 30_000;
+    return Date.now() - (await stat(lockDir)).mtimeMs > timeoutMs;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
@@ -243,17 +263,31 @@ export async function recordExecutionEvent(
   const details = params.details === undefined ? undefined : JSON.parse(JSON.stringify(params.details)) as unknown;
   if (details !== undefined) assertNoSecrets(details);
 
+  const timestamp = params.timestamp ?? new Date().toISOString();
+  const timestampMs = validateTimestamp(timestamp);
+
   const lockKey = `${resolve(root)}:${params.decision_id}`;
   return withDecisionLock(lockKey, async () => {
     const eventsDir = join(root, ".jevrouter", "events");
     await mkdir(eventsDir, { recursive: true });
     return withEventFileLock(eventsDir, async () => {
       await assertDecisionExists(params.decision_id, root);
-      const currentState = resolveDecisionExecutionState(await getExecutionEventsForDecision(params.decision_id, root));
+      const existingEvents = await getExecutionEventsForDecision(params.decision_id, root);
+      const currentState = resolveDecisionExecutionState(existingEvents);
       if (!VALID_FEEDBACK_TRANSITIONS[currentState].includes(params.type)) {
         throw new Error(
           `Invalid event transition: cannot transition from "${currentState}" to "${params.type}" for decision "${params.decision_id}"`,
         );
+      }
+
+      if (existingEvents.length > 0) {
+        const lastEvent = existingEvents[existingEvents.length - 1];
+        const lastTime = Date.parse(lastEvent.timestamp);
+        if (Number.isFinite(lastTime) && timestampMs < lastTime) {
+          throw new Error(
+            `Invalid event timestamp: timestamp "${timestamp}" cannot be earlier than previous event "${lastEvent.type}" timestamp "${lastEvent.timestamp}" for decision "${params.decision_id}"`,
+          );
+        }
       }
 
       const envelope: FeedbackEventEnvelope = {
@@ -261,7 +295,7 @@ export async function recordExecutionEvent(
         decision_id: params.decision_id,
         ...(params.plan_id ? { plan_id: params.plan_id } : {}),
         type: params.type,
-        timestamp: params.timestamp ?? new Date().toISOString(),
+        timestamp,
         ...(details !== undefined ? { details: details as Record<string, unknown> } : {}),
       };
       await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
@@ -281,7 +315,8 @@ export async function readExecutionEvents(root = process.cwd()): Promise<Feedbac
     throw error;
   }
 
-  const events: FeedbackEventEnvelope[] = [];
+  const indexedEvents: Array<{ event: FeedbackEventEnvelope; order: number }> = [];
+  let order = 0;
   for (const name of fileNames.filter((f) => f.endsWith(".jsonl")).sort()) {
     try {
       const content = await readFile(join(eventsDir, name), "utf8");
@@ -292,7 +327,7 @@ export async function readExecutionEvents(root = process.cwd()): Promise<Feedbac
         try {
           const parsed = JSON.parse(trimmed) as FeedbackEventEnvelope;
           if (parsed && typeof parsed === "object" && typeof parsed.decision_id === "string" && typeof parsed.type === "string") {
-            events.push(parsed);
+            indexedEvents.push({ event: parsed, order: order++ });
           }
         } catch {
           // Skip invalid lines
@@ -303,13 +338,16 @@ export async function readExecutionEvents(root = process.cwd()): Promise<Feedbac
     }
   }
 
-  return events.sort((a, b) => {
-    const left = Date.parse(a.timestamp);
-    const right = Date.parse(b.timestamp);
+  indexedEvents.sort((a, b) => {
+    const left = Date.parse(a.event.timestamp);
+    const right = Date.parse(b.event.timestamp);
     const leftTime = Number.isFinite(left) ? left : Infinity;
     const rightTime = Number.isFinite(right) ? right : Infinity;
-    return leftTime === rightTime ? 0 : leftTime - rightTime;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return a.order - b.order;
   });
+
+  return indexedEvents.map((item) => item.event);
 }
 
 /** Get all feedback events for a specific decision_id in chronological order. */
