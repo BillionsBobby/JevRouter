@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { FeedbackEventEnvelope, FeedbackEventType } from "./types.js";
 import { requestId } from "./utils.js";
@@ -154,6 +154,29 @@ export function validateTimestamp(timestamp: string): number {
 
 const decisionQueues = new Map<string, Promise<unknown>>();
 
+async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: number): Promise<boolean> {
+  if (!(await isAbandonedLock(dir, ownerPath, timeoutMs))) {
+    return false;
+  }
+  const claimPath = `${dir}-claim-${process.pid}-${requestId("claim")}`;
+  try {
+    await rename(dir, claimPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return false;
+  }
+  try {
+    const claimedOwner = join(claimPath, "pid");
+    if (!(await isAbandonedLock(claimPath, claimedOwner, timeoutMs))) {
+      await rename(claimPath, dir).catch(() => {});
+      return false;
+    }
+  } finally {
+    await rm(claimPath, { recursive: true, force: true }).catch(() => {});
+  }
+  return true;
+}
+
 async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Promise<T> {
   const lockDir = join(eventsDir, ".write-lock");
   const ownerPath = join(lockDir, "pid");
@@ -168,24 +191,31 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     if (await isAbandonedLock(lockDir, ownerPath)) {
-      if (await isAbandonedLock(recoveryDir, recoveryOwnerPath, 1000)) {
-        try {
-          await rm(recoveryDir, { recursive: true, force: true });
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-      }
+      // Safe recovery ownership: claim abandoned recovery lock atomically via rename
+      await claimAbandonedDir(recoveryDir, recoveryOwnerPath, 1000);
+
+      let acquiredRecovery = false;
       try {
         await mkdir(recoveryDir);
-        try {
-          await writeFile(recoveryOwnerPath, String(process.pid));
-          if (await isAbandonedLock(lockDir, ownerPath)) await rm(lockDir, { recursive: true, force: true });
-        } finally {
-          await rm(recoveryDir, { recursive: true, force: true });
-        }
-        continue;
+        await writeFile(recoveryOwnerPath, String(process.pid));
+        acquiredRecovery = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+
+      if (acquiredRecovery) {
+        try {
+          const currentRecoveryOwner = await readFile(recoveryOwnerPath, "utf8").catch(() => null);
+          if (currentRecoveryOwner === String(process.pid)) {
+            await claimAbandonedDir(lockDir, ownerPath, 30_000);
+          }
+        } finally {
+          const currentRecoveryOwner = await readFile(recoveryOwnerPath, "utf8").catch(() => null);
+          if (currentRecoveryOwner === String(process.pid)) {
+            await rm(recoveryDir, { recursive: true, force: true }).catch(() => {});
+          }
+        }
+        continue;
       }
     }
     if (Date.now() >= deadline) throw new Error("Timed out waiting for execution feedback writer");
@@ -195,7 +225,10 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
     await writeFile(ownerPath, String(process.pid));
     return await fn();
   } finally {
-    await rm(lockDir, { recursive: true, force: true });
+    const currentLockOwner = await readFile(ownerPath, "utf8").catch(() => null);
+    if (currentLockOwner === String(process.pid)) {
+      await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 

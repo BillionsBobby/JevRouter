@@ -713,3 +713,75 @@ test("replays events with identical timestamps in authoritative ingestion order"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("concurrent recovery does not race or allow multiple processes into protected section", async () => {
+  const root = await createFixture();
+  const eventsUrl = pathToFileURL(resolve("dist/events.js")).href;
+
+  // Pre-seed an abandoned lockDir and abandoned recoveryDir
+  const lockDir = join(root, ".jevrouter/events/.write-lock");
+  const recoveryDir = join(root, ".jevrouter/events/.write-lock-recovery");
+  await mkdir(lockDir, { recursive: true });
+  await writeFile(join(lockDir, "pid"), "2147483647");
+  await mkdir(recoveryDir, { recursive: true });
+  await writeFile(join(recoveryDir, "pid"), "2147483647");
+
+  // Spawn 8 concurrent child processes that all start recovery simultaneously via IPC synchronization
+  const childCode = `process.send('ready'); process.on('message', async () => {
+    const { recordExecutionEvent } = await import(${JSON.stringify(eventsUrl)});
+    try {
+      await recordExecutionEvent({ decision_id: 'dec_12345', type: 'execution_started' }, ${JSON.stringify(root)});
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+  });`;
+
+  try {
+    const children = Array.from({ length: 8 }, () =>
+      spawn(process.execPath, ["-e", childCode], { stdio: ["ignore", "ignore", "ignore", "ipc"] }),
+    );
+    await Promise.all(children.map((child) => new Promise<void>((done) => child.once("message", () => done()))));
+    const exits = children.map((child) => new Promise<number | null>((done) => child.once("exit", done)));
+    children.forEach((child) => child.send("start"));
+
+    const exitCodes = (await Promise.all(exits)).sort();
+    assert.deepEqual(exitCodes, [0, 1, 1, 1, 1, 1, 1, 1]);
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "execution_started");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent callers on abandoned recovery lock maintain mutual exclusion without removing each other's locks", async () => {
+  const root = await createFixture();
+  try {
+    const lockDir = join(root, ".jevrouter/events/.write-lock");
+    const recoveryDir = join(root, ".jevrouter/events/.write-lock-recovery");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(join(lockDir, "pid"), "2147483647");
+    await mkdir(recoveryDir, { recursive: true });
+    await writeFile(join(recoveryDir, "pid"), "2147483647");
+
+    // Launch two concurrent recordExecutionEvent calls
+    const [res1, res2] = await Promise.allSettled([
+      recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root),
+      recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root),
+    ]);
+
+    const fulfilled = [res1, res2].filter((r) => r.status === "fulfilled");
+    const rejected = [res1, res2].filter((r) => r.status === "rejected");
+
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "execution_started");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
