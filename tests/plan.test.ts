@@ -69,7 +69,8 @@ test("serial plan feeds prior selections forward in the state", async () => {
   const choices = ["a.read", "b.write", "a.read"];
   const provider = new RecordingProvider((_request, index) => {
     const choice = choices[index];
-    return { answers: { tool: choiceAnswer(choice, { "a.read": 0.5, "b.write": 0.4, "c.search": 0.1, [choice]: 0.9 }, 0.9) } };
+    const scores = { "a.read": choice === "a.read" ? 0.9 : 0.05, "b.write": choice === "b.write" ? 0.9 : 0.05, "c.search": 0.05 };
+    return { answers: { tool: choiceAnswer(choice, scores, 0.9) } };
   });
   const plan = await new JevRouter(provider, { min_confidence: 0.55 }).plan({ request: "read, write, read again" }, candidates, { steps: 3, mode: "serial" });
   assert.equal(provider.calls.length, 3);
@@ -173,7 +174,7 @@ test("decompose routes each injected sub-goal and threads plan context", async (
 test("hierarchical routing picks a group first, then a member", async () => {
   const provider = new RecordingProvider((_request, index) => {
     if (index === 0) {
-      return { answers: { tool: choiceAnswer("mcp_tool", { mcp_tool: 0.9 }, 0.9) } };
+      return { answers: { tool: choiceAnswer("mcp_tool", { mcp_tool: 1 }, 0.9) } };
     }
     return { answers: { tool: choiceAnswer("b.write", { "a.read": 0.3, "b.write": 0.6, "c.search": 0.1 }, 0.9) } };
   });

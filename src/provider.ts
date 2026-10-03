@@ -49,6 +49,7 @@ export class JevProviderError extends Error {
     public readonly code: "jev_auth_error" | "jev_timeout" | "jev_malformed_response" | "jev_http_error",
     message: string,
     public readonly status?: number,
+    public readonly raw?: JevRawResponse,
   ) {
     super(message);
     this.name = "JevProviderError";
@@ -287,23 +288,42 @@ function stateToText(state: unknown): string {
   return typeof state === "string" ? state : JSON.stringify(state) ?? String(state);
 }
 
+/**
+ * Tolerance applied when checking that a Choice probability distribution sums to one.
+ * Providers serialize probabilities as floats, so an exact sum cannot be required. The
+ * value is deliberately tight: it absorbs binary floating-point noise without tolerating
+ * a distribution that was truncated or rounded to a different scale.
+ */
+export const CHOICE_DISTRIBUTION_TOLERANCE = 1e-3;
+
 export function getChoiceAnswer(raw: JevRawResponse, key: string = DEFAULT_TOOL_QUESTION): JevChoiceAnswer {
   const answer = raw.answers?.[key];
-  if (!answer || typeof answer !== "object") throw new JevProviderError("jev_malformed_response", `Jev response is missing answers.${key}`);
+  if (!answer || typeof answer !== "object") throw new JevProviderError("jev_malformed_response", `Jev response is missing answers.${key}`, undefined, raw);
   const value = answer as Record<string, unknown>;
   if (value.type !== "choice" || typeof value.choice !== "string" || !value.probabilities || typeof value.probabilities !== "object") {
-    throw new JevProviderError("jev_malformed_response", `answers.${key} is not a Choice answer`);
+    throw new JevProviderError("jev_malformed_response", `answers.${key} is not a Choice answer`, undefined, raw);
   }
   const probabilities: Record<string, number> = {};
-  for (const [key, probability] of Object.entries(value.probabilities as Record<string, unknown>)) {
+  let total = 0;
+  for (const [option, probability] of Object.entries(value.probabilities as Record<string, unknown>)) {
     if (typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) {
-      throw new JevProviderError("jev_malformed_response", `Invalid probability for ${key}`);
+      throw new JevProviderError("jev_malformed_response", `Invalid probability for ${option}`, undefined, raw);
     }
-    probabilities[key] = probability;
+    probabilities[option] = probability;
+    total += probability;
   }
-  const confidence = typeof value.confidence === "number" ? value.confidence : Math.max(...Object.values(probabilities), 0);
-  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    throw new JevProviderError("jev_malformed_response", "Invalid confidence");
+  if (Object.keys(probabilities).length === 0) {
+    throw new JevProviderError("jev_malformed_response", `answers.${key} has an empty probability distribution`, undefined, raw);
+  }
+  if (Math.abs(total - 1) > CHOICE_DISTRIBUTION_TOLERANCE) {
+    throw new JevProviderError("jev_malformed_response", `Probability distribution for answers.${key} sums to ${total.toFixed(6)}, expected 1 within ${CHOICE_DISTRIBUTION_TOLERANCE}`, undefined, raw);
+  }
+  if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence)) {
+    throw new JevProviderError("jev_malformed_response", `answers.${key} is missing a finite numeric confidence`, undefined, raw);
+  }
+  const confidence = value.confidence;
+  if (confidence < 0 || confidence > 1) {
+    throw new JevProviderError("jev_malformed_response", "Invalid confidence", undefined, raw);
   }
   return { ...(value as JevChoiceAnswer), type: "choice", choice: value.choice, probabilities, confidence };
 }
