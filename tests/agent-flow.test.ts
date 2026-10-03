@@ -4,7 +4,6 @@ import { copyFile, mkdir, mkdtemp, readFile, writeFile, readdir, stat } from 'no
 import { delimiter, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS } from '../src/agent-setup.js';
 import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS, ensureGitIgnore } from '../src/agent-setup.js';
 import { providerConfiguration, createProvider } from '../src/runtime.js';
 
