@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { FeedbackEventEnvelope, FeedbackEventType } from "./types.js";
 import { requestId } from "./utils.js";
@@ -154,30 +154,120 @@ export function validateTimestamp(timestamp: string): number {
 
 const decisionQueues = new Map<string, Promise<unknown>>();
 
-async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: number): Promise<boolean> {
-  if (!(await isAbandonedLock(dir, ownerPath, timeoutMs))) {
-    return false;
-  }
-  const claimPath = `${dir}-claim-${process.pid}-${requestId("claim")}`;
-  try {
-    await rename(dir, claimPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return false;
-  }
-  try {
-    const claimedOwner = join(claimPath, "pid");
-    if (!(await isAbandonedLock(claimPath, claimedOwner, timeoutMs))) {
-      await rename(claimPath, dir).catch(() => {});
-      return false;
-    }
-  } finally {
-    await rm(claimPath, { recursive: true, force: true }).catch(() => {});
-  }
-  return true;
+export interface EventLockDeps {
+  mkdir?: (path: any, options?: any) => Promise<any>;
+  readFile?: (path: any, options?: any) => Promise<any>;
+  writeFile?: (path: any, data: any, options?: any) => Promise<any>;
+  rename?: (oldPath: any, newPath: any) => Promise<any>;
+  rm?: (path: any, options?: any) => Promise<any>;
+  stat?: (path: any) => Promise<any>;
+  pid?: number;
+  isProcessAlive?: (pid: number) => boolean;
 }
 
-async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Promise<T> {
+async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: number, deps?: EventLockDeps): Promise<boolean> {
+  const fsStat = deps?.stat ?? stat;
+  const fsMkdir = deps?.mkdir ?? mkdir;
+  const fsReadFile = deps?.readFile ?? readFile;
+  const fsRename = deps?.rename ?? rename;
+  const fsRm = deps?.rm ?? rm;
+  const lockPid = deps?.pid ?? process.pid;
+
+  const initialStat = await fsStat(dir).catch(() => null);
+  if (!initialStat) return false;
+  const initialMtime = initialStat.mtimeMs;
+  if (!(await isAbandonedLock(dir, ownerPath, timeoutMs, deps))) {
+    return false;
+  }
+
+  // Pre-claim synchronization: acquire internal claim marker without exposing an absent canonical path
+  const claimLock = join(dir, ".claim");
+  try {
+    await fsMkdir(claimLock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      try {
+        const claimStat = await fsStat(claimLock);
+        if (Date.now() - claimStat.mtimeMs > 1000) {
+          await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
+        }
+      } catch {}
+      return false;
+    }
+    throw error;
+  }
+
+  let isLiveClaim = false;
+  const claimPath = `${dir}-claim-${lockPid}-${requestId("claim")}`;
+  try {
+    // Re-verify ownership while holding the claim marker before relocating anything:
+    // If a pid file is present, ensure it is still abandoned (dead PID).
+    try {
+      const ownerStr = await fsReadFile(ownerPath, "utf8");
+      const owner = Number(ownerStr);
+      if (Number.isInteger(owner) && owner > 0) {
+        if (deps?.isProcessAlive ? deps.isProcessAlive(owner) : isAlivePid(owner)) {
+          return false; // Live owner!
+        }
+      }
+    } catch (readErr) {
+      if ((readErr as NodeJS.ErrnoException).code !== "ENOENT") throw readErr;
+      if (Date.now() - initialMtime <= timeoutMs) {
+        return false;
+      }
+    }
+
+    try {
+      await fsRename(dir, claimPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return false;
+    }
+
+    const claimedOwner = join(claimPath, "pid");
+    let isClaimedAbandoned = false;
+    try {
+      const ownerStr = await fsReadFile(claimedOwner, "utf8");
+      const owner = Number(ownerStr);
+      if (Number.isInteger(owner) && owner > 0) {
+        isClaimedAbandoned = !(deps?.isProcessAlive ? deps.isProcessAlive(owner) : isAlivePid(owner));
+      }
+    } catch (readErr) {
+      if ((readErr as NodeJS.ErrnoException).code === "ENOENT") {
+        isClaimedAbandoned = Date.now() - initialMtime > timeoutMs;
+      }
+    }
+
+    if (!isClaimedAbandoned) {
+      isLiveClaim = true;
+      try {
+        await fsRename(claimPath, dir);
+      } catch {
+        // Restoration failed (e.g. ENOTEMPTY because canonical path already exists).
+        // PRESERVE the live claim — do NOT remove claimPath in finally.
+      }
+      return false;
+    }
+
+    // Lock was abandoned and successfully claimed: remove claim directory
+    await fsRm(claimPath, { recursive: true, force: true }).catch(() => {});
+    return true;
+  } finally {
+    if (!isLiveClaim) {
+      await fsRm(claimPath, { recursive: true, force: true }).catch(() => {});
+    }
+    await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>, deps?: EventLockDeps): Promise<T> {
+  const fsMkdir = deps?.mkdir ?? mkdir;
+  const fsReadFile = deps?.readFile ?? readFile;
+  const fsWriteFile = deps?.writeFile ?? writeFile;
+  const fsRm = deps?.rm ?? rm;
+  const lockPid = deps?.pid ?? process.pid;
+
   const lockDir = join(eventsDir, ".write-lock");
   const ownerPath = join(lockDir, "pid");
   const recoveryDir = join(eventsDir, ".write-lock-recovery");
@@ -185,19 +275,19 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {
-      await mkdir(lockDir);
+      await fsMkdir(lockDir);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    if (await isAbandonedLock(lockDir, ownerPath)) {
-      // Safe recovery ownership: claim abandoned recovery lock atomically via rename
-      await claimAbandonedDir(recoveryDir, recoveryOwnerPath, 1000);
+    if (await isAbandonedLock(lockDir, ownerPath, 30_000, deps)) {
+      // Safe recovery ownership: claim abandoned recovery lock atomically
+      await claimAbandonedDir(recoveryDir, recoveryOwnerPath, 1000, deps);
 
       let acquiredRecovery = false;
       try {
-        await mkdir(recoveryDir);
-        await writeFile(recoveryOwnerPath, String(process.pid));
+        await fsMkdir(recoveryDir);
+        await fsWriteFile(recoveryOwnerPath, String(lockPid));
         acquiredRecovery = true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -205,14 +295,14 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
 
       if (acquiredRecovery) {
         try {
-          const currentRecoveryOwner = await readFile(recoveryOwnerPath, "utf8").catch(() => null);
-          if (currentRecoveryOwner === String(process.pid)) {
-            await claimAbandonedDir(lockDir, ownerPath, 30_000);
+          const currentRecoveryOwner = await fsReadFile(recoveryOwnerPath, "utf8").catch(() => null);
+          if (currentRecoveryOwner === String(lockPid)) {
+            await claimAbandonedDir(lockDir, ownerPath, 30_000, deps);
           }
         } finally {
-          const currentRecoveryOwner = await readFile(recoveryOwnerPath, "utf8").catch(() => null);
-          if (currentRecoveryOwner === String(process.pid)) {
-            await rm(recoveryDir, { recursive: true, force: true }).catch(() => {});
+          const currentRecoveryOwner = await fsReadFile(recoveryOwnerPath, "utf8").catch(() => null);
+          if (currentRecoveryOwner === String(lockPid)) {
+            await fsRm(recoveryDir, { recursive: true, force: true }).catch(() => {});
           }
         }
         continue;
@@ -222,32 +312,42 @@ async function withEventFileLock<T>(eventsDir: string, fn: () => Promise<T>): Pr
     await new Promise(resolveWait => setTimeout(resolveWait, 20));
   }
   try {
-    await writeFile(ownerPath, String(process.pid));
+    await fsWriteFile(ownerPath, String(lockPid));
     return await fn();
   } finally {
-    const currentLockOwner = await readFile(ownerPath, "utf8").catch(() => null);
-    if (currentLockOwner === String(process.pid)) {
-      await rm(lockDir, { recursive: true, force: true }).catch(() => {});
+    const currentLockOwner = await fsReadFile(ownerPath, "utf8").catch(() => null);
+    if (currentLockOwner === String(lockPid)) {
+      await fsRm(lockDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 }
 
-async function isAbandonedLock(lockDir: string, ownerPath: string, timeoutMs = 30_000): Promise<boolean> {
+function isAlivePid(pid: number): boolean {
   try {
-    const owner = Number(await readFile(ownerPath, "utf8"));
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+    return false;
+  }
+}
+
+async function isAbandonedLock(lockDir: string, ownerPath: string, timeoutMs = 30_000, deps?: EventLockDeps): Promise<boolean> {
+  const fsReadFile = deps?.readFile ?? readFile;
+  const fsStat = deps?.stat ?? stat;
+  try {
+    const owner = Number(await fsReadFile(ownerPath, "utf8"));
     if (Number.isInteger(owner) && owner > 0) {
-      try {
-        process.kill(owner, 0);
+      if (deps?.isProcessAlive ? deps.isProcessAlive(owner) : isAlivePid(owner)) {
         return false;
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "ESRCH";
       }
+      return true;
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   try {
-    return Date.now() - (await stat(lockDir)).mtimeMs > timeoutMs;
+    return Date.now() - (await fsStat(lockDir)).mtimeMs > timeoutMs;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
@@ -331,7 +431,28 @@ export async function recordExecutionEvent(
         timestamp,
         ...(details !== undefined ? { details: details as Record<string, unknown> } : {}),
       };
-      await appendFile(join(eventsDir, "events.jsonl"), `${JSON.stringify(envelope)}\n`, "utf8");
+
+      const eventsFile = join(eventsDir, "events.jsonl");
+      let separator = "";
+      try {
+        const fileStat = await stat(eventsFile);
+        if (fileStat.size > 0) {
+          const handle = await open(eventsFile, "r");
+          try {
+            const buffer = Buffer.alloc(1);
+            const { bytesRead } = await handle.read(buffer, 0, 1, fileStat.size - 1);
+            if (bytesRead > 0 && buffer[0] !== 0x0a) {
+              separator = "\n";
+            }
+          } finally {
+            await handle.close();
+          }
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+
+      await appendFile(eventsFile, `${separator}${JSON.stringify(envelope)}\n`, "utf8");
       return envelope;
     });
   });

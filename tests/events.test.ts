@@ -16,6 +16,8 @@ import {
   validateSafeId,
   validateTimestamp,
   VALID_FEEDBACK_TRANSITIONS,
+  withEventFileLock,
+  type EventLockDeps,
 } from "../src/events.js";
 import { collectDashboardStats } from "../src/dashboard.js";
 import type { FeedbackEventEnvelope, RouteResult } from "../src/types.js";
@@ -784,4 +786,262 @@ test("concurrent callers on abandoned recovery lock maintain mutual exclusion wi
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("recovers from partial initial JSONL record without trailing newline", async () => {
+  const root = await createFixture();
+  try {
+    const eventsFile = join(root, ".jevrouter", "events", "events.jsonl");
+    // Simulate an interrupted initial write leaving an unclosed record and no newline
+    await writeFile(eventsFile, '{"event_id":"evt_incomplete","decision_id":"dec_12345"', "utf8");
+
+    const event = await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+    assert.equal(event.type, "execution_started");
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "execution_started");
+    assert.equal(resolveDecisionExecutionState(events), "execution_started");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recovers from valid start plus partial successor tail and preserves task completion", async () => {
+  const root = await createFixture();
+  try {
+    const eventsFile = join(root, ".jevrouter", "events", "events.jsonl");
+    await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+
+    // Simulate an interrupted successor write without trailing newline
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(eventsFile, '{"event_id":"evt_corrupt","type":"execution_succeeded"', "utf8");
+
+    const succeeded = await recordExecutionEvent(
+      { decision_id: "dec_12345", type: "execution_succeeded", details: { exit_code: 0 } },
+      root,
+    );
+    assert.equal(succeeded.type, "execution_succeeded");
+
+    const completed = await recordExecutionEvent({ decision_id: "dec_12345", type: "task_completed" }, root);
+    assert.equal(completed.type, "task_completed");
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 3);
+    assert.deepEqual(events.map((e) => e.type), ["execution_started", "execution_succeeded", "task_completed"]);
+    assert.equal(resolveDecisionExecutionState(events), "task_completed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("preserves valid final record lacking a trailing newline without fusing", async () => {
+  const root = await createFixture();
+  try {
+    const eventsFile = join(root, ".jevrouter", "events", "events.jsonl");
+    // Pre-seed a valid record without a trailing newline
+    const initialEnvelope = {
+      event_id: "evt_init",
+      decision_id: "dec_12345",
+      type: "handoff_accepted",
+      timestamp: new Date().toISOString(),
+    };
+    await writeFile(eventsFile, JSON.stringify(initialEnvelope), "utf8");
+
+    const nextEvent = await recordExecutionEvent({ decision_id: "dec_12345", type: "execution_started" }, root);
+    assert.equal(nextEvent.type, "execution_started");
+
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 2);
+    assert.deepEqual(events.map((e) => e.type), ["handoff_accepted", "execution_started"]);
+    assert.equal(resolveDecisionExecutionState(events), "execution_started");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent callers for different decisions on abandoned recovery lock maintain mutual exclusion", async () => {
+  const root = await createFixture();
+  try {
+    const lockDir = join(root, ".jevrouter", "events", ".write-lock");
+    const recoveryDir = join(root, ".jevrouter", "events", ".write-lock-recovery");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(join(lockDir, "pid"), "2147483647");
+    await mkdir(recoveryDir, { recursive: true });
+    await writeFile(join(recoveryDir, "pid"), "2147483647");
+
+    let currentOccupancy = 0;
+    let maxOccupancy = 0;
+
+    const eventsDir = join(root, ".jevrouter", "events");
+    const [res1, res2] = await Promise.allSettled([
+      withEventFileLock(eventsDir, async () => {
+        currentOccupancy++;
+        maxOccupancy = Math.max(maxOccupancy, currentOccupancy);
+        await new Promise((r) => setTimeout(r, 25));
+        currentOccupancy--;
+      }),
+      withEventFileLock(eventsDir, async () => {
+        currentOccupancy++;
+        maxOccupancy = Math.max(maxOccupancy, currentOccupancy);
+        await new Promise((r) => setTimeout(r, 25));
+        currentOccupancy--;
+      }),
+    ]);
+
+    assert.equal(res1.status, "fulfilled");
+    assert.equal(res2.status, "fulfilled");
+    assert.equal(maxOccupancy, 1, `Expected maxOccupancy to be 1, but observed ${maxOccupancy}`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("deterministic three-process interleaving maintains mutual exclusion and limits protected-section occupancy to 1", async () => {
+  const dirs = new Set<string>();
+  const files = new Map<string, { content: string; mtimeMs: number }>();
+  const livePids = new Set<number>([1001, 1002, 1003]);
+
+  const eventsDir = "/virtual/.jevrouter/events";
+  const lockDir = `${eventsDir}/.write-lock`;
+  const recoveryDir = `${eventsDir}/.write-lock-recovery`;
+
+  dirs.add("/virtual");
+  dirs.add("/virtual/.jevrouter");
+  dirs.add(eventsDir);
+  dirs.add(lockDir);
+  dirs.add(recoveryDir);
+
+  const deadPid = 999999;
+  files.set(`${lockDir}/pid`, { content: String(deadPid), mtimeMs: Date.now() - 60_000 });
+  files.set(`${recoveryDir}/pid`, { content: String(deadPid), mtimeMs: Date.now() - 60_000 });
+
+  let pauseBeforeRenameA = true;
+  let resumeA: () => void = () => {};
+  let aPausedResolve: () => void;
+  const aPausedPromise = new Promise<void>((resolve) => {
+    aPausedResolve = resolve;
+  });
+
+  let pauseBeforeRenameB = true;
+  let resumeB: () => void = () => {};
+  let bPausedResolve: () => void;
+  const bPausedPromise = new Promise<void>((resolve) => {
+    bPausedResolve = resolve;
+  });
+
+  const createSimulator = (pid: number): EventLockDeps => {
+    return {
+      pid,
+      isProcessAlive: (p: number) => livePids.has(p),
+      mkdir: async (path: string) => {
+        if (pid === 1001 && pauseBeforeRenameA && path === recoveryDir + "/.claim") {
+          pauseBeforeRenameA = false;
+          aPausedResolve();
+          await new Promise<void>((res) => { resumeA = res; });
+        }
+        if (pid === 1002 && pauseBeforeRenameB && path === lockDir + "/.claim") {
+          pauseBeforeRenameB = false;
+          bPausedResolve();
+          await new Promise<void>((res) => { resumeB = res; });
+        }
+        if (dirs.has(path)) {
+          const err = new Error(`EEXIST: directory already exists, mkdir '${path}'`) as NodeJS.ErrnoException;
+          err.code = "EEXIST";
+          throw err;
+        }
+        dirs.add(path);
+      },
+      readFile: async (path: string) => {
+        const file = files.get(path);
+        if (!file) {
+          const err = new Error(`ENOENT: no such file or directory, open '${path}'`) as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }
+        return file.content;
+      },
+      writeFile: async (path: string, data: string) => {
+        files.set(path, { content: data, mtimeMs: Date.now() });
+      },
+      stat: async (path: string) => {
+        if (files.has(path)) {
+          return { mtimeMs: files.get(path)!.mtimeMs };
+        }
+        if (dirs.has(path)) {
+          return { mtimeMs: Date.now() };
+        }
+        const err = new Error(`ENOENT: no such file or directory, stat '${path}'`) as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      },
+      rename: async (oldPath: string, newPath: string) => {
+
+        if (dirs.has(newPath)) {
+          const err = new Error(`ENOTEMPTY: directory not empty, rename '${oldPath}' -> '${newPath}'`) as NodeJS.ErrnoException;
+          err.code = "ENOTEMPTY";
+          throw err;
+        }
+        if (!dirs.has(oldPath) && !files.has(oldPath)) {
+          const err = new Error(`ENOENT: no such file or directory, rename '${oldPath}' -> '${newPath}'`) as NodeJS.ErrnoException;
+          err.code = "ENOENT";
+          throw err;
+        }
+
+        if (dirs.has(oldPath)) {
+          dirs.delete(oldPath);
+          dirs.add(newPath);
+          for (const [fPath, fVal] of Array.from(files.entries())) {
+            if (fPath.startsWith(oldPath + "/")) {
+              files.delete(fPath);
+              files.set(newPath + fPath.slice(oldPath.length), fVal);
+            }
+          }
+        } else if (files.has(oldPath)) {
+          const val = files.get(oldPath)!;
+          files.delete(oldPath);
+          files.set(newPath, val);
+        }
+      },
+      rm: async (path: string) => {
+        dirs.delete(path);
+        files.delete(path);
+        for (const [fPath] of Array.from(files.entries())) {
+          if (fPath.startsWith(path + "/")) {
+            files.delete(fPath);
+          }
+        }
+        for (const dPath of Array.from(dirs)) {
+          if (dPath.startsWith(path + "/")) {
+            dirs.delete(dPath);
+          }
+        }
+      },
+    };
+  };
+
+  let currentOccupancy = 0;
+  let maxOccupancy = 0;
+  const protectedSection = async () => {
+    currentOccupancy++;
+    maxOccupancy = Math.max(maxOccupancy, currentOccupancy);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    currentOccupancy--;
+  };
+
+  const taskA = withEventFileLock(eventsDir, protectedSection, createSimulator(1001));
+  await aPausedPromise;
+
+  const taskB = withEventFileLock(eventsDir, protectedSection, createSimulator(1002));
+  await bPausedPromise;
+
+  resumeA();
+  await new Promise((r) => setTimeout(r, 10));
+
+  const taskC = withEventFileLock(eventsDir, protectedSection, createSimulator(1003));
+  resumeB();
+
+  await Promise.allSettled([taskA, taskB, taskC]);
+
+  assert.equal(maxOccupancy, 1, `Expected maxOccupancy <= 1, but observed simultaneous occupancy of ${maxOccupancy}`);
 });
