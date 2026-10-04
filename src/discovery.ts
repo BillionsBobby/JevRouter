@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { parse as parseToml } from "smol-toml";
 import { parse } from "yaml";
 import type { CapabilityManifest } from "./types.js";
 
@@ -34,6 +35,59 @@ export async function discoverSkills(root: string): Promise<CapabilityManifest[]
     });
   }
   return result.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Read the routing metadata of Codex custom agents without exporting their private instructions. */
+export async function discoverCodexAgents(root: string, selectedNames?: string[]): Promise<CapabilityManifest[]> {
+  const files = await findFiles(resolve(root), (name) => name.toLowerCase().endsWith(".toml"));
+  const selected = selectedNames ? new Set(selectedNames.map((name) => name.trim()).filter(Boolean)) : null;
+  const result: CapabilityManifest[] = [];
+  for (const file of files) {
+    const source = await readFile(file, "utf8");
+    let profile: Record<string, unknown>;
+    try {
+      profile = parseToml(source);
+    } catch {
+      // Ignore malformed TOML; it cannot be a loadable Codex profile.
+      continue;
+    }
+    const { name, description, developer_instructions: instructions } = profile;
+    if (typeof name !== "string" || !name.trim()
+      || typeof description !== "string" || !description.trim()
+      || typeof instructions !== "string" || !instructions.trim()
+      || (selected && !selected.has(name))) continue;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    result.push({
+      id: `codex_agent.${slug}`,
+      name,
+      type: "subagent",
+      description: description.trim(),
+      verification: { status: "discovered", source: "codex_agent_toml" },
+      permissions: [],
+      risk: { level: "low", categories: ["codex_subagent"] },
+      availability: { available: true, healthcheck: false },
+      execution: { mode: "subagent", target: name, dry_run: true },
+      metadata: { source: "codex_agent_toml", path: relative(root, file) },
+    });
+  }
+  const sorted = result.sort((a, b) => a.name.localeCompare(b.name));
+  const ownersById = new Map<string, CapabilityManifest>();
+  for (const candidate of sorted) {
+    const owner = ownersById.get(candidate.id);
+    if (owner) {
+      throw new Error(
+        `Codex agent ID collision for "${candidate.id}": "${owner.name}" (${String(owner.metadata?.path)}) and "${candidate.name}" (${String(candidate.metadata?.path)}) normalize to the same ID`,
+      );
+    }
+    ownersById.set(candidate.id, candidate);
+  }
+
+  if (selected) {
+    const found = new Set(result.map((candidate) => candidate.name));
+    const missing = [...selected].filter((name) => !found.has(name));
+    if (missing.length > 0) throw new Error(`Codex agent profile not found: ${missing.join(", ")}`);
+  }
+  return sorted;
 }
 
 export async function discoverClis(commands: string[], timeoutMs = 3_000): Promise<CapabilityManifest[]> {

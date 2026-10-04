@@ -152,12 +152,12 @@ export async function doctorAgents(target: AgentTarget = "all", root = process.c
     const helper = join(skillDirectory(agent, root), "scripts/route.mjs");
     if (!(await readOptional(instructions))?.includes(renderRoutingInstructions(skill).trim())) issues.push(`Missing active project routing rule: ${instructions}`);
     if (!(await readOptional(skill))?.includes("name: jevrouter")) issues.push(`Missing Skill: ${skill}`);
-    if (!(await readOptional(helper))?.includes(integration?.cli ?? cliPath)) issues.push(`Missing or stale CLI helper: ${helper}`);
+    if (!(await readOptional(helper))?.includes(JSON.stringify(integration?.cli ?? cliPath))) issues.push(`Missing or stale CLI helper: ${helper}`);
     try { if (integration) await lstat(integration.cli); } catch { issues.push("Installed CLI is no longer present; reinstall JevRouter"); }
     const mcpFile = integration?.with_mcp ? mcpPath(agent, root) : null;
     if (mcpFile) {
       const config = await readOptional(mcpFile);
-      if (!config?.includes(integration!.cli) || !config.includes(key)) issues.push(`Missing or stale optional MCP configuration: ${mcpFile}`);
+      if (!config?.includes(JSON.stringify(integration!.cli)) || !config.includes(key)) issues.push(`Missing or stale optional MCP configuration: ${mcpFile}`);
     }
     return { agent, configured: issues.length === 0, instruction_file: instructions, skill_file: skill, mcp_file: mcpFile, key_available: keyAvailable, provider_key: key, issues, scope: "local_configuration_only" as const };
   }));

@@ -1,14 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile, readdir, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { copyFile, mkdir, mkdtemp, readFile, writeFile, readdir, stat } from 'node:fs/promises';
+import { delimiter, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { setupAgents, doctorAgents, resolveHostCommand, AGENT_HOST_COMMANDS, ensureGitIgnore } from '../src/agent-setup.js';
 import { providerConfiguration, createProvider } from '../src/runtime.js';
 
 const root = resolve('.');
 const cli = join(root, 'dist/cli.js');
-const stub = join(root, 'tests/fixtures/provider-stub.mjs');
+const stub = pathToFileURL(join(root, 'tests/fixtures/provider-stub.mjs')).href;
+const hostStub = pathToFileURL(join(root, 'tests/fixtures/host-stub.mjs')).href;
+async function installHost(bin: string, command: string) {
+  if (process.platform === 'win32') {
+    await copyFile(process.execPath, join(bin, `${command}.exe`));
+  } else {
+    await writeFile(join(bin, command), `#!${process.execPath}\nconsole.log(JSON.stringify({host_started:true,key_present:Boolean(process.env.JEV_API_KEY),command:${JSON.stringify(command)},args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
+  }
+}
+function hostEnvironment(bin: string, key = 'fixture-key') {
+  return environment({
+    JEV_API_KEY: key,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
+    ...(process.platform === 'win32' ? { NODE_OPTIONS: `--import=${hostStub}` } : {}),
+  });
+}
 async function project() {
   await mkdir(join(root, '.test-artifacts'), { recursive: true });
   return mkdtemp(join(root, '.test-artifacts/project-'));
@@ -39,7 +55,7 @@ test('one command installs CLI Skill for all hosts, checks Jev, and keeps existi
   assert.equal((await readdir(cwd)).filter(name => name.includes('backup')).length, 3);
   for (const prefix of ['.agents', '.claude', '.cursor']) {
     const file = await readFile(join(cwd, prefix, 'skills/jevrouter/SKILL.md'), 'utf8');
-    assert.ok(file.startsWith('---\nname: jevrouter'));
+    assert.match(file, /^---\r?\nname: jevrouter/);
     assert.ok(!file.includes('{{JEVROUTER_COMMAND}}'));
     assert.ok(!file.includes('fixture-key'));
   }
@@ -114,7 +130,7 @@ test('Codex active override gets appended, legacy MCP configs remain byte-identi
   await writeFile(join(cwd, '.codex/config.toml'), old, { flag: 'wx' });
   await setupAgents('codex', cwd, 'openrouter');
   assert.equal(await readFile(join(cwd, '.codex/config.toml'), 'utf8'), old);
-  assert.match(await readFile(join(cwd, 'AGENTS.override.md'), 'utf8'), /\.agents\/skills\/jevrouter/);
+  assert.match(await readFile(join(cwd, 'AGENTS.override.md'), 'utf8'), /\.agents[\\/]skills[\\/]jevrouter/);
   await assert.rejects(stat(join(cwd, 'AGENTS.md')), { code: 'ENOENT' });
   const check = await doctorAgents('codex', cwd, 'typesafe');
   assert.equal(check[0].configured, false);
@@ -142,15 +158,15 @@ test('agent start launches the host only after checking Jev and carries the key 
   const cwd = await project();
   const bin = join(cwd, 'bin');
   await mkdir(bin);
-  await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconsole.log(JSON.stringify({host_started:true,key_present:Boolean(process.env.JEV_API_KEY),args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
-  const result = run(cwd, ['agent', 'start', '--agent', 'codex', '--request', 'choose the next step'], undefined, environment({ JEV_API_KEY: 'fixture-key', PATH: `${bin}:${process.env.PATH}` }));
+  await installHost(bin, 'codex');
+  const result = run(cwd, ['agent', 'start', '--agent', 'codex', '--request', 'choose the next step'], undefined, hostEnvironment(bin));
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /CHECK passed/);
   assert.match(result.stderr, /START host=codex/);
   assert.match(result.stdout, /"host_started":true,"key_present":true/);
   assert.ok(!result.stdout.includes('fixture-key'));
   assert.ok(!result.stderr.includes('fixture-key'));
-  const invalid = run(cwd, ['agent', 'start', '--agent', 'codex'], undefined, environment({ JEV_API_KEY: 'wrong', PATH: `${bin}:${process.env.PATH}` }));
+  const invalid = run(cwd, ['agent', 'start', '--agent', 'codex'], undefined, hostEnvironment(bin, 'wrong'));
   assert.equal(invalid.status, 1);
   assert.ok(!invalid.stdout.includes('host_started'));
 });
@@ -215,8 +231,8 @@ test('regression: agent start --agent cursor executes Cursor Agent CLI (agent or
   await mkdir(bin);
 
   // Modern Cursor Agent CLI binary: 'agent'
-  await writeFile(join(bin, 'agent'), `#!${process.execPath}\nconsole.log(JSON.stringify({command:'agent',args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
-  const resultAgent = run(cwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, environment({ JEV_API_KEY: 'fixture-key', PATH: `${bin}:${process.env.PATH}` }));
+  await installHost(bin, 'agent');
+  const resultAgent = run(cwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, hostEnvironment(bin));
   assert.equal(resultAgent.status, 0, resultAgent.stderr);
   assert.match(resultAgent.stderr, /CHECK passed/);
   assert.match(resultAgent.stderr, /START host=cursor/);
@@ -226,8 +242,8 @@ test('regression: agent start --agent cursor executes Cursor Agent CLI (agent or
   const legacyCwd = await project();
   const legacyBin = join(legacyCwd, 'bin');
   await mkdir(legacyBin);
-  await writeFile(join(legacyBin, 'cursor-agent'), `#!${process.execPath}\nconsole.log(JSON.stringify({command:'cursor-agent',args:process.argv.slice(2)}));\n`, { flag: 'wx', mode: 0o700 });
-  const resultLegacy = run(legacyCwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, environment({ JEV_API_KEY: 'fixture-key', PATH: `${legacyBin}:${process.env.PATH}` }));
+  await installHost(legacyBin, 'cursor-agent');
+  const resultLegacy = run(legacyCwd, ['agent', 'start', '--agent', 'cursor', '--request', 'test routing'], undefined, hostEnvironment(legacyBin));
   assert.equal(resultLegacy.status, 0, resultLegacy.stderr);
   assert.match(resultLegacy.stderr, /CHECK passed/);
   assert.match(resultLegacy.stderr, /START host=cursor/);
