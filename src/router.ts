@@ -208,6 +208,7 @@ export class JevRouter {
         questions: { tool: { instructions: groupQuestionInstructions(step) } },
       });
       const coarseAnswer = getChoiceAnswer(coarseRaw);
+      assertKnownOptions(coarseAnswer, groupCandidates, "coarse", coarseRaw);
       const members = groups.get(coarseAnswer.choice) ?? ordered;
       const finalRaw = await this.provider.decide({
         state,
@@ -215,6 +216,7 @@ export class JevRouter {
         ...(step !== undefined ? { questions: { tool: { instructions: stepQuestionInstructions(step) } } } : {}),
       });
       const finalAnswer = getChoiceAnswer(finalRaw);
+      assertKnownOptions(finalAnswer, members, "final", finalRaw);
       const memberIds = new Set(members.map((member) => member.id));
       const decided: DecidedAnswer = {
         answer: finalAnswer,
@@ -328,7 +330,7 @@ export class JevRouter {
       status: "no_decision",
       decision: { kind: "choice", question: "Which single capability should handle this request?", selected: null, jev_choice: null, candidates: ordered.map((candidate) => candidateView(candidate, null, null, null, null, input.actor_permissions, this.policy)) },
       fallback: { type: "provider_error", reason: providerError.message },
-      raw_jev: null,
+      raw_jev: providerError.raw ?? null,
       error: { code: providerError.code, message: providerError.message },
     };
   }
@@ -457,6 +459,7 @@ function emptyCandidateResult(base: { request_id: string; decision_id: string; m
 }
 
 function singleStageDecision(answer: JevChoiceAnswer, covered: CapabilityManifest[], raw: JevRawResponse | null): DecidedAnswer {
+  assertKnownOptions(answer, covered, "single-stage", raw);
   return {
     answer,
     probabilityById: new Map(covered.filter((candidate) => Object.prototype.hasOwnProperty.call(answer.probabilities, candidate.id)).map((candidate) => [candidate.id, answer.probabilities[candidate.id]])),
@@ -464,6 +467,18 @@ function singleStageDecision(answer: JevChoiceAnswer, covered: CapabilityManifes
     stageById: new Map(markStages(covered, "single")),
     raw_jev: raw,
   };
+}
+
+/** Reject a Choice answer whose option set does not match the criteria of its question. */
+function assertKnownOptions(answer: JevChoiceAnswer, covered: CapabilityManifest[], stage: string, raw: JevRawResponse | null): void {
+  const known = new Set(covered.map((candidate) => candidate.id));
+  const unknown = Object.keys(answer.probabilities).filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    throw new JevProviderError("jev_malformed_response", `Jev returned ${stage} probabilities for unknown options: ${unknown.join(", ")}`, undefined, raw ?? undefined);
+  }
+  if (!known.has(answer.choice)) {
+    throw new JevProviderError("jev_malformed_response", `Jev selected unknown ${stage} option ${answer.choice}`, undefined, raw ?? undefined);
+  }
 }
 
 function markStages(covered: CapabilityManifest[], stage: "single" | "coarse" | "final"): Array<[string, "single" | "coarse" | "final"]> {
