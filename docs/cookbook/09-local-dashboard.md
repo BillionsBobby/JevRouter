@@ -13,9 +13,10 @@ Open `http://127.0.0.1:8788`.
 It reads:
 
 - `.jevrouter/decisions/*.json` for status, provider, live/demo source, selected capabilities and latency;
-- `.jevrouter/plans/*.json` for plan modes, step counts and step statuses.
+- `.jevrouter/plans/*.json` for plan modes, step counts and step statuses;
+- `.jevrouter/events/events.jsonl` for execution feedback lifecycle events.
 
-The page refreshes every five seconds. Execution outcome is **not collected** in the MVP because JevRouter does not execute host capabilities. A selected route is therefore never counted as a successful task unless a future host feedback adapter records that result.
+The page refreshes every five seconds. Execution outcome is collected when execution feedback events are recorded via the CLI (`jevrouter feedback ...`) or SDK (`recordExecutionEvent(...)`). A selected route is never counted as a completed task unless valid execution feedback records that completion.
 
 For scripts, the same data is available at:
 
