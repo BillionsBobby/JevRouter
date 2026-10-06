@@ -176,7 +176,7 @@ await recordExecutionEvent({
 });
 ```
 
-Events follow strict lifecycle transitions (`handoff_accepted` $\to$ `execution_started` $\to$ `execution_succeeded`/`failed` $\to$ `task_completed`), reject unknown decision IDs, and forbid sensitive keys or tokens from being ingested. Decisions without recorded feedback are labelled `unknown`, preventing selected decisions from being falsely treated as completed tasks.
+Events follow strict lifecycle transitions (`handoff_accepted` $\to$ `execution_started` $\to$ `execution_succeeded` $\to$ `task_completed`, or `execution_failed`/`execution_cancelled` $\to$ `rerouted`), reject unknown decision IDs, and forbid sensitive keys or tokens from being ingested. Decisions without recorded feedback are labelled `unknown`, preventing selected decisions from being falsely treated as completed tasks.
 
 ## Interfaces
 

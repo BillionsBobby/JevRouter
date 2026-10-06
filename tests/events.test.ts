@@ -219,6 +219,20 @@ test("assertNoSecrets rejects sensitive keys and secret values", () => {
     () => assertNoSecrets({ debug: ["s", "k", "-mocksecrettoken123456789"].join("") }),
     /detected sensitive value/,
   );
+  // Fine-grained GitHub PAT values
+  const fineGrainedPat = "github_pat_" + "A".repeat(22) + "_" + "B".repeat(59);
+  assert.throws(
+    () => assertNoSecrets({ stdout: fineGrainedPat }),
+    /detected sensitive value/,
+  );
+  assert.throws(
+    () => assertNoSecrets({ nested: { output: fineGrainedPat } }),
+    /detected sensitive value/,
+  );
+  assert.throws(
+    () => assertNoSecrets({ items: ["ok", fineGrainedPat] }),
+    /detected sensitive value/,
+  );
 
   // Safe details are accepted
   assert.doesNotThrow(() =>
@@ -276,6 +290,49 @@ test("recordExecutionEvent rejects non-object details (primitives, arrays, null)
         ),
       /Execution feedback details must be a plain JSON object/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recordExecutionEvent rejects fine-grained GitHub PAT values before append", async () => {
+  const root = await createFixture();
+  try {
+    const patVal = "github_pat_" + "A".repeat(22) + "_" + "B".repeat(59);
+
+    // Plain value
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: { stdout: patVal } },
+          root,
+        ),
+      /detected sensitive value/,
+    );
+
+    // Nested object
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: { nested: { output: patVal } } },
+          root,
+        ),
+      /detected sensitive value/,
+    );
+
+    // Nested array
+    await assert.rejects(
+      () =>
+        recordExecutionEvent(
+          { decision_id: "dec_12345", type: "execution_started", details: { items: ["ok", patVal] } },
+          root,
+        ),
+      /detected sensitive value/,
+    );
+
+    // Assert rejection happened before append: events.jsonl must remain empty / nonexistent
+    const events = await getExecutionEventsForDecision("dec_12345", root);
+    assert.equal(events.length, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -418,6 +475,32 @@ test("CLI feedback and stats commands record events and return deterministic agg
     );
     assert.equal(tokenBadFb.status, 1);
     assert.match(tokenBadFb.stderr, /sensitive keys or tokens/);
+
+    // 6. Run feedback with fine-grained GitHub PAT values -> fails with exitCode 1
+    const patVal = "github_pat_" + "A".repeat(22) + "_" + "B".repeat(59);
+    const patPlainFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", JSON.stringify({ stdout: patVal })],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(patPlainFb.status, 1);
+    assert.match(patPlainFb.stderr, /(?:sensitive keys or tokens|sensitive tokens or credentials|detected sensitive value)/);
+
+    const patNestedObjFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", JSON.stringify({ nested: { output: patVal } })],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(patNestedObjFb.status, 1);
+    assert.match(patNestedObjFb.stderr, /(?:sensitive keys or tokens|sensitive tokens or credentials|detected sensitive value)/);
+
+    const patNestedArrFb = spawnSync(
+      process.execPath,
+      [cli, "feedback", "dec_12345", "execution_succeeded", "--details", JSON.stringify({ items: [patVal] })],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(patNestedArrFb.status, 1);
+    assert.match(patNestedArrFb.stderr, /(?:sensitive keys or tokens|sensitive tokens or credentials|detected sensitive value)/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -898,7 +981,7 @@ test("concurrent callers for different decisions on abandoned recovery lock main
 });
 
 test("deterministic three-process interleaving maintains mutual exclusion and limits protected-section occupancy to 1", async () => {
-  const dirs = new Set<string>();
+  const dirs = new Map<string, { mtimeMs: number }>();
   const files = new Map<string, { content: string; mtimeMs: number }>();
   const livePids = new Set<number>([1001, 1002, 1003]);
 
@@ -906,11 +989,11 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
   const lockDir = `${eventsDir}/.write-lock`;
   const recoveryDir = `${eventsDir}/.write-lock-recovery`;
 
-  dirs.add("/virtual");
-  dirs.add("/virtual/.jevrouter");
-  dirs.add(eventsDir);
-  dirs.add(lockDir);
-  dirs.add(recoveryDir);
+  dirs.set("/virtual", { mtimeMs: Date.now() });
+  dirs.set("/virtual/.jevrouter", { mtimeMs: Date.now() });
+  dirs.set(eventsDir, { mtimeMs: Date.now() });
+  dirs.set(lockDir, { mtimeMs: Date.now() - 60_000 });
+  dirs.set(recoveryDir, { mtimeMs: Date.now() - 60_000 });
 
   const deadPid = 999999;
   files.set(`${lockDir}/pid`, { content: String(deadPid), mtimeMs: Date.now() - 60_000 });
@@ -935,22 +1018,12 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
       pid,
       isProcessAlive: (p: number) => livePids.has(p),
       mkdir: async (path: string) => {
-        if (pid === 1001 && pauseBeforeRenameA && path === recoveryDir + "/.claim") {
-          pauseBeforeRenameA = false;
-          aPausedResolve();
-          await new Promise<void>((res) => { resumeA = res; });
-        }
-        if (pid === 1002 && pauseBeforeRenameB && path === lockDir + "/.claim") {
-          pauseBeforeRenameB = false;
-          bPausedResolve();
-          await new Promise<void>((res) => { resumeB = res; });
-        }
         if (dirs.has(path)) {
           const err = new Error(`EEXIST: directory already exists, mkdir '${path}'`) as NodeJS.ErrnoException;
           err.code = "EEXIST";
           throw err;
         }
-        dirs.add(path);
+        dirs.set(path, { mtimeMs: Date.now() });
       },
       readFile: async (path: string) => {
         const file = files.get(path);
@@ -969,13 +1042,27 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
           return { mtimeMs: files.get(path)!.mtimeMs };
         }
         if (dirs.has(path)) {
-          return { mtimeMs: Date.now() };
+          return { mtimeMs: dirs.get(path)!.mtimeMs };
         }
         const err = new Error(`ENOENT: no such file or directory, stat '${path}'`) as NodeJS.ErrnoException;
         err.code = "ENOENT";
         throw err;
       },
       rename: async (oldPath: string, newPath: string) => {
+        if (pid === 1001 && pauseBeforeRenameA && oldPath === recoveryDir) {
+          pauseBeforeRenameA = false;
+          aPausedResolve();
+          await new Promise<void>((res) => {
+            resumeA = res;
+          });
+        }
+        if (pid === 1002 && pauseBeforeRenameB && oldPath === lockDir) {
+          pauseBeforeRenameB = false;
+          bPausedResolve();
+          await new Promise<void>((res) => {
+            resumeB = res;
+          });
+        }
 
         if (dirs.has(newPath)) {
           const err = new Error(`ENOTEMPTY: directory not empty, rename '${oldPath}' -> '${newPath}'`) as NodeJS.ErrnoException;
@@ -989,12 +1076,19 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
         }
 
         if (dirs.has(oldPath)) {
+          const dirEntry = dirs.get(oldPath)!;
           dirs.delete(oldPath);
-          dirs.add(newPath);
+          dirs.set(newPath, dirEntry);
           for (const [fPath, fVal] of Array.from(files.entries())) {
             if (fPath.startsWith(oldPath + "/")) {
               files.delete(fPath);
               files.set(newPath + fPath.slice(oldPath.length), fVal);
+            }
+          }
+          for (const [dPath, dVal] of Array.from(dirs.entries())) {
+            if (dPath.startsWith(oldPath + "/")) {
+              dirs.delete(dPath);
+              dirs.set(newPath + dPath.slice(oldPath.length), dVal);
             }
           }
         } else if (files.has(oldPath)) {
@@ -1011,7 +1105,7 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
             files.delete(fPath);
           }
         }
-        for (const dPath of Array.from(dirs)) {
+        for (const [dPath] of Array.from(dirs.entries())) {
           if (dPath.startsWith(path + "/")) {
             dirs.delete(dPath);
           }
@@ -1022,26 +1116,65 @@ test("deterministic three-process interleaving maintains mutual exclusion and li
 
   let currentOccupancy = 0;
   let maxOccupancy = 0;
-  const protectedSection = async () => {
+
+  const protectedSection = (pid: number) => async () => {
     currentOccupancy++;
     maxOccupancy = Math.max(maxOccupancy, currentOccupancy);
     await new Promise((resolve) => setTimeout(resolve, 20));
     currentOccupancy--;
   };
 
-  const taskA = withEventFileLock(eventsDir, protectedSection, createSimulator(1001));
+  const taskA = withEventFileLock(eventsDir, protectedSection(1001), createSimulator(1001));
   await aPausedPromise;
 
-  const taskB = withEventFileLock(eventsDir, protectedSection, createSimulator(1002));
+  // A holds recoveryDir/.claim and is paused before rename.
+  // Age A's claim marker past 1000ms threshold:
+  const aClaim = `${recoveryDir}/.claim`;
+  assert.ok(dirs.has(aClaim), "A should have created recoveryDir/.claim");
+  dirs.get(aClaim)!.mtimeMs = Date.now() - 1500;
+
+  // Start B while A's live claim is >1000ms old:
+  const taskB = withEventFileLock(eventsDir, protectedSection(1002), createSimulator(1002));
+
+  // Give B time to run retry loops against A's aged claim
+  await new Promise((r) => setTimeout(r, 60));
+
+  // Verify that B did NOT remove A's live claim marker despite elapsed time > 1s:
+  assert.ok(dirs.has(aClaim), "A's live claim marker must not be removed by B solely due to elapsed time");
+  assert.equal(currentOccupancy, 0, "B must not enter protected section while A holds claim");
+
+  // Resume A to complete
+  resumeA();
+  await taskA;
+  assert.equal(currentOccupancy, 0);
+
+  // Simulate an abandoned lockDir before B claims it:
+  dirs.set(lockDir, { mtimeMs: Date.now() - 60_000 });
+  files.set(`${lockDir}/pid`, { content: String(deadPid), mtimeMs: Date.now() - 60_000 });
+
+  // B should now acquire recovery of abandoned lockDir and pause before renaming lockDir:
   await bPausedPromise;
 
-  resumeA();
-  await new Promise((r) => setTimeout(r, 10));
+  // B holds lockDir/.claim and is paused before rename.
+  // Age B's claim marker past 1000ms threshold:
+  const bClaim = `${lockDir}/.claim`;
+  assert.ok(dirs.has(bClaim), "B should have created lockDir/.claim");
+  dirs.get(bClaim)!.mtimeMs = Date.now() - 1500;
 
-  const taskC = withEventFileLock(eventsDir, protectedSection, createSimulator(1003));
+  // Start C while B's live claim is >1000ms old:
+  const taskC = withEventFileLock(eventsDir, protectedSection(1003), createSimulator(1003));
+
+  // Give C time to run retry loops against B's aged claim
+  await new Promise((r) => setTimeout(r, 60));
+
+  // Verify that C did NOT remove B's live claim marker despite elapsed time > 1s:
+  assert.ok(dirs.has(bClaim), "B's live claim marker must not be removed by C solely due to elapsed time");
+
+  // Resume B to complete
   resumeB();
 
-  await Promise.allSettled([taskA, taskB, taskC]);
-
+  const results = await Promise.allSettled([taskB, taskC]);
+  assert.deepEqual(results.map((r) => r.status), ["fulfilled", "fulfilled"]);
   assert.equal(maxOccupancy, 1, `Expected maxOccupancy <= 1, but observed simultaneous occupancy of ${maxOccupancy}`);
 });
+

@@ -41,7 +41,7 @@ export function validateSafeId(id: string, fieldName = "decision ID"): void {
 }
 
 const SENSITIVE_KEY_REGEX = /(?:key|token|secret|password|passwd|auth|bearer|credential)/i;
-const SENSITIVE_VALUE_REGEX = /(?:bearer\s+[a-zA-Z0-9_\-\.]+|sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{20,})/i;
+const SENSITIVE_VALUE_REGEX = /(?:bearer\s+[a-zA-Z0-9_\-\.]+|sk-[a-zA-Z0-9_\-]{16,}|ghp_[a-zA-Z0-9]{20,}|github_pat_[a-zA-Z0-9_]{20,})/i;
 
 /** Validate that event details are a plain object and do not contain sensitive tokens or secret keys. */
 export function assertNoSecrets(value: unknown, path = "details"): void {
@@ -169,6 +169,7 @@ async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: numb
   const fsStat = deps?.stat ?? stat;
   const fsMkdir = deps?.mkdir ?? mkdir;
   const fsReadFile = deps?.readFile ?? readFile;
+  const fsWriteFile = deps?.writeFile ?? writeFile;
   const fsRename = deps?.rename ?? rename;
   const fsRm = deps?.rm ?? rm;
   const lockPid = deps?.pid ?? process.pid;
@@ -182,14 +183,41 @@ async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: numb
 
   // Pre-claim synchronization: acquire internal claim marker without exposing an absent canonical path
   const claimLock = join(dir, ".claim");
+  const claimOwnerPath = join(claimLock, "owner");
+  let acquiredClaimLock = false;
   try {
     await fsMkdir(claimLock);
+    try {
+      await fsWriteFile(claimOwnerPath, String(lockPid));
+      acquiredClaimLock = true;
+    } catch (writeErr) {
+      await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
+      throw writeErr;
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       try {
-        const claimStat = await fsStat(claimLock);
-        if (Date.now() - claimStat.mtimeMs > 1000) {
+        let isClaimDead = false;
+        try {
+          const ownerStr = await fsReadFile(claimOwnerPath, "utf8");
+          const owner = Number(ownerStr);
+          if (Number.isInteger(owner) && owner > 0) {
+            const isAlive = deps?.isProcessAlive ? deps.isProcessAlive(owner) : isAlivePid(owner);
+            if (!isAlive) {
+              isClaimDead = true;
+            }
+          }
+        } catch (readErr) {
+          if ((readErr as NodeJS.ErrnoException).code === "ENOENT") {
+            const claimStat = await fsStat(claimLock);
+            if (Date.now() - claimStat.mtimeMs > 1000) {
+              isClaimDead = true;
+            }
+          }
+        }
+
+        if (isClaimDead) {
           await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
         }
       } catch {}
@@ -216,6 +244,11 @@ async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: numb
       if (Date.now() - initialMtime <= timeoutMs) {
         return false;
       }
+    }
+
+    const currentClaimOwner = await fsReadFile(claimOwnerPath, "utf8").catch(() => null);
+    if (currentClaimOwner !== String(lockPid)) {
+      return false;
     }
 
     try {
@@ -257,7 +290,14 @@ async function claimAbandonedDir(dir: string, ownerPath: string, timeoutMs: numb
     if (!isLiveClaim) {
       await fsRm(claimPath, { recursive: true, force: true }).catch(() => {});
     }
-    await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
+    if (acquiredClaimLock) {
+      try {
+        const currentClaimOwner = await fsReadFile(claimOwnerPath, "utf8").catch(() => null);
+        if (currentClaimOwner === String(lockPid)) {
+          await fsRm(claimLock, { recursive: true, force: true }).catch(() => {});
+        }
+      } catch {}
+    }
   }
 }
 
