@@ -94,6 +94,38 @@ const planResult = await plan({ request, candidates: agentTools }, { steps: 3, m
 
 Try everything offline with the labelled demo provider (`--provider demo`) — no key required.
 
+### Using a Jev-compatible endpoint: Decision Models
+
+`HttpJevProvider` accepts a complete endpoint URL, so you can use
+[Decision Models](https://api.decisionmodels.io/llms.txt) without changing the provider implementation.
+Set `DECISION_MODELS_API_KEY` in your environment, then pass it explicitly:
+
+```ts
+import { HttpJevProvider, getNoulAnswer } from "jevrouter";
+
+const apiKey = process.env.DECISION_MODELS_API_KEY;
+if (!apiKey) throw new Error("Set DECISION_MODELS_API_KEY");
+
+const provider = new HttpJevProvider({
+  endpoint: "https://api.decisionmodels.io/v1/systemone",
+  apiKey,
+  model: "s1-fast", // or "s1-pro"
+});
+
+const raw = await provider.decide({
+  state: "Printer on floor 2 is offline again.",
+  candidates: [],
+  questions: {
+    is_urgent: { type: "noul", instructions: "Does this convey urgency?" },
+  },
+});
+console.log(getNoulAnswer(raw, "is_urgent").noul);
+```
+
+`s1-fast` accepts one question per request; `s1-pro` accepts up to three. Keep question batches within the
+selected model's limit. For multi-step plans, use serial mode or bound batch mode to that question limit;
+JevRouter does not automatically split oversized batches for this endpoint.
+
 ## Cookbook
 
 Task-oriented recipes, each with exact commands and expected output:
